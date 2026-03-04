@@ -2,9 +2,8 @@
 
 class UpdateController {
     
-    // CONFIGURACIÓN: Cambia esta URL por la dirección RAW de tu archivo JSON en GitHub o tu servidor
-    // Ejemplo: 'https://raw.githubusercontent.com/usuario/repo/main/update_info.json'
-    private $updateUrl = 'https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/update_info.json';
+    // CONFIGURACIÓN: URL RAW del archivo JSON en GitHub
+    private $updateUrl = 'https://raw.githubusercontent.com/puertosystem/qr_simple/main/update_info.json';
     
     private $currentVersion = '1.0.0';
     private $tempDir;
