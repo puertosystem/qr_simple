@@ -1,0 +1,8 @@
+RewriteEngine On
+RewriteBase /qr/
+
+# Handle certificate validation with clean URL
+RewriteRule ^certificate/validate/([a-zA-Z0-9-]+)$ index.php?page=validate&code=$1 [L,QSA]
+
+# Prevent directory listing
+Options -Indexes
