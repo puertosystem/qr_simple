@@ -1,8 +1,8 @@
 {
-    "version": "1.0.1",
+    "version": "1.0.2",
     "date": "2026-03-05",
     "description": "Nueva funcionalidad de actualizaciones automáticas, mejoras en la gestión de certificados y corrección de errores en la carga masiva.",
-    "download_url": "https://puertosystem.com/updates/qr_simple/update_1.0.1.zip",
+    "download_url": "https://puertosystem.com/updates/qr_simple/update_1.0.2.zip",
     "requirements": {
         "php": "7.4"
     }
