@@ -1,0 +1,4 @@
+AuthType Basic
+AuthName "Restricted Updates"
+AuthUserFile /home/master/web/puertosystem.com/public_html/updates/qr_simple/.htpasswd
+Require valid-user

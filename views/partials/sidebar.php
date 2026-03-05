@@ -105,7 +105,7 @@
               <li class="nav-item">
                 <a href="index.php?page=updates" class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] === 'updates') ? 'active' : ''; ?>">
                   <i class="fas fa-sync-alt nav-icon"></i>
-                  <p>Comprueba actualización</p>
+                  <p>Actualización</p>
                 </a>
               </li>
             </ul>

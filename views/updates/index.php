@@ -175,81 +175,91 @@ $(document).ready(function() {
                 btn.prop('disabled', false).html(originalText);
                 resultArea.removeClass('d-none');
 
-                if (response.update_available) {
-                    resultArea.addClass('alert-warning');
-                    resultArea.html(`
-                        <h5><i class="icon fas fa-exclamation-triangle"></i> ¡Nueva versión disponible!</h5>
-                        <p>Versión: <strong>${response.version}</strong> (${response.date})</p>
-                        <p>${response.description}</p>
-                        <button class="btn btn-success mt-2" onclick="startUpdate()"><i class="fas fa-download"></i> Descargar e Instalar</button>
-                    `);
+                if (response.status === 'success') {
+                    if (response.update_available) {
+                        resultArea.addClass('alert-warning');
+                        resultArea.html(`
+                            <h5><i class="icon fas fa-exclamation-triangle"></i> ¡Nueva versión disponible!</h5>
+                            <p>Versión: <strong>${response.version}</strong> (${response.date})</p>
+                            <p>${response.description}</p>
+                            <button class="btn btn-success mt-2" onclick="confirmUpdate('${response.version}')"><i class="fas fa-download"></i> Descargar e Instalar</button>
+                        `);
+                    } else {
+                        resultArea.addClass('alert-success');
+                        resultArea.html(`
+                            <h5><i class="icon fas fa-check"></i> Sistema Actualizado</h5>
+                            <p>${response.message}</p>
+                        `);
+                    }
                 } else {
-                    resultArea.addClass('alert-success');
-                    resultArea.html(`
-                        <h5><i class="icon fas fa-check"></i> Sistema Actualizado</h5>
-                        <p>${response.message}</p>
-                    `);
+                    // Mostrar mensaje de error del servidor
+                    resultArea.removeClass('d-none').addClass('alert-danger');
+                    resultArea.html(`<h5><i class="icon fas fa-ban"></i> Error</h5><p>${response.message}</p>`);
                 }
             },
-            error: function() {
+            error: function(xhr, status, error) {
                 btn.prop('disabled', false).html(originalText);
                 resultArea.removeClass('d-none').addClass('alert-danger');
-                resultArea.html('<h5><i class="icon fas fa-ban"></i> Error</h5><p>No se pudo conectar con el servidor de actualizaciones.</p>');
+                resultArea.html(`<h5><i class="icon fas fa-ban"></i> Error de Conexión</h5><p>No se pudo conectar con el servidor. Código: ${xhr.status}. Detalles: ${error}</p>`);
             }
         });
     });
 });
 
-function startUpdate() {
-    if(!confirm('¿Estás seguro de iniciar la actualización? Se recomienda hacer una copia de seguridad antes.')) return;
+function confirmUpdate(version) {
+    if (confirm('¿Estás seguro de que deseas instalar la versión ' + version + '? Se recomienda hacer una copia de seguridad de la base de datos antes de continuar.')) {
+        startUpdate();
+    }
+}
 
+function startUpdate() {
     var btn = $('#btn-check-update');
     var resultArea = $('#check-result');
     var progressBar = $('#update-progress');
     var progressBarInner = progressBar.find('.progress-bar');
 
-    btn.prop('disabled', true);
-    resultArea.addClass('d-none');
+    // UI Update
+    btn.prop('disabled', true).addClass('d-none');
+    resultArea.html('<div class="spinner-border text-primary" role="status"><span class="sr-only">Cargando...</span></div> <span class="ml-2">Descargando e instalando actualización... Por favor espere.</span>');
     progressBar.removeClass('d-none');
-    progressBarInner.css('width', '10%').text('Iniciando...');
-
-    // Simulamos progreso
-    var progress = 10;
-    var interval = setInterval(function() {
-        progress += 10;
-        if(progress > 90) clearInterval(interval);
-        progressBarInner.css('width', progress + '%').text(progress + '%');
-    }, 500);
+    progressBarInner.css('width', '50%');
 
     $.ajax({
         url: 'index.php?page=updates&action=process',
-        method: 'POST',
+        method: 'GET',
         dataType: 'json',
         success: function(response) {
-            clearInterval(interval);
-            progressBarInner.css('width', '100%').text('100%');
+            progressBarInner.css('width', '100%');
             
-            setTimeout(function() {
-                progressBar.addClass('d-none');
-                resultArea.removeClass('d-none');
-                
-                if (response.status === 'success') {
-                    resultArea.removeClass('alert-warning').addClass('alert-success');
-                    resultArea.html('<h5><i class="icon fas fa-check"></i> ¡Actualización completada!</h5><p>El sistema se ha actualizado correctamente. Recarga la página.</p>');
-                    setTimeout(function() { location.reload(); }, 2000);
-                } else {
-                    resultArea.removeClass('alert-warning').addClass('alert-danger');
-                    resultArea.html(`<h5><i class="icon fas fa-ban"></i> Error en la actualización</h5><p>${response.message}</p>`);
-                    btn.prop('disabled', false);
-                }
-            }, 1000);
+            if (response.status === 'success') {
+                resultArea.removeClass('alert-warning').addClass('alert-success');
+                resultArea.html(`
+                    <h5><i class="icon fas fa-check"></i> ¡Actualización Completada!</h5>
+                    <p>${response.message}</p>
+                    <p>El sistema se recargará en 5 segundos...</p>
+                `);
+                setTimeout(function() {
+                    location.reload();
+                }, 5000);
+            } else {
+                resultArea.removeClass('alert-warning').addClass('alert-danger');
+                resultArea.html(`
+                    <h5><i class="icon fas fa-ban"></i> Error en la Actualización</h5>
+                    <p>${response.message}</p>
+                    <button class="btn btn-primary mt-2" onclick="location.reload()">Reintentar</button>
+                `);
+                btn.prop('disabled', false).removeClass('d-none');
+            }
         },
-        error: function() {
-            clearInterval(interval);
+        error: function(xhr, status, error) {
             progressBar.addClass('d-none');
-            resultArea.removeClass('d-none').addClass('alert-danger');
-            resultArea.html('<h5><i class="icon fas fa-ban"></i> Error Crítico</h5><p>Falló el proceso de actualización.</p>');
-            btn.prop('disabled', false);
+            resultArea.removeClass('alert-warning').addClass('alert-danger');
+            resultArea.html(`
+                <h5><i class="icon fas fa-ban"></i> Error Fatal</h5>
+                <p>Ocurrió un error inesperado durante la actualización. Por favor contacte a soporte.</p>
+                <p>Detalles: ${xhr.status} - ${error}</p>
+            `);
+            btn.prop('disabled', false).removeClass('d-none');
         }
     });
 }

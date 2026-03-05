@@ -643,7 +643,7 @@ class CertificateController
                 $baseDir = dirname($scriptName);
                 $baseDir = str_replace('\\', '/', $baseDir);
                 $baseDir = rtrim($baseDir, '/');
-                $validateUrl = $protocol . '://' . $host . $baseDir . '/index.php?page=validate&code=' . rawurlencode($code);
+                $validateUrl = $protocol . '://' . $host . $baseDir . '/certificados/validar.php?codigo=' . rawurlencode($code);
 
                 // ======================================================================================
                 // CONFIGURACIÓN DE POSICIÓN DEL CÓDIGO QR
