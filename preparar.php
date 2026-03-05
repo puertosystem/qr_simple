@@ -16,13 +16,13 @@ $foldersToEmpty = ['images/auspicio', 'images/plantilla'];
 $excludeExtensions = ['zip', 'rar', 'gz'];
 
 $rootDir = __DIR__;
-$controllerPath = $rootDir . '/controllers/UpdateController.php';
+$configPath = $rootDir . '/config/app.php';
 
 // Detectar versión
 $version = 'unknown';
-if (file_exists($controllerPath)) {
-    $content = file_get_contents($controllerPath);
-    if (preg_match('/private \$currentVersion = [\'"](.*?)[\'"];/', $content, $matches)) {
+if (file_exists($configPath)) {
+    $content = file_get_contents($configPath);
+    if (preg_match("/define\('APP_VERSION', [\"'](.*?)[\"']\);/", $content, $matches)) {
         $version = $matches[1];
     }
 }
@@ -216,19 +216,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
         exit;
     }
 
-    // 1. Actualizar UpdateController.php
-    if (file_exists($controllerPath)) {
-        $content = file_get_contents($controllerPath);
-        // Reemplazar private $currentVersion = '...';
-        $newContent = preg_replace(
-            '/private \$currentVersion = [\'"](.*?)[\'"];/',
-            "private \$currentVersion = '$newVersion';",
-            $content
-        );
-        
-        if ($newContent && $newContent !== $content) {
-            file_put_contents($controllerPath, $newContent);
-        }
+    // 1. Actualizar config/app.php
+    if (file_exists($configPath)) {
+        $content = "<?php\ndefine('APP_VERSION', '$newVersion');\n";
+        file_put_contents($configPath, $content);
     }
 
     // 2. Actualizar update_info.json

@@ -1,36 +1,12 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nuevo Participante - Módulo Certificados QR</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
-  <link rel="stylesheet" href="assets/lte/plugins/fontawesome-free/css/all.min.css">
-  <link rel="stylesheet" href="assets/lte/dist/css/adminlte.min.css">
+  <?php include __DIR__ . '/../partials/head.php'; ?>
 </head>
 <body class="hold-transition sidebar-mini">
 <div class="wrapper">
 
-  <nav class="main-header navbar navbar-expand navbar-white navbar-light">
-    <ul class="navbar-nav">
-      <li class="nav-item">
-        <a class="nav-link" data-widget="pushmenu" href="#" role="button"><i class="fas fa-bars"></i></a>
-      </li>
-      <li class="nav-item d-none d-sm-inline-block">
-        <a href="index.php" class="nav-link">Inicio</a>
-      </li>
-      <li class="nav-item d-none d-sm-inline-block">
-        <a href="index.php?page=logout" class="nav-link">Cerrar sesión</a>
-      </li>
-    </ul>
-    <ul class="navbar-nav ml-auto">
-      <li class="nav-item">
-        <a class="nav-link" data-widget="fullscreen" href="#" role="button">
-          <i class="fas fa-expand-arrows-alt"></i>
-        </a>
-      </li>
-    </ul>
-  </nav>
+  <?php include __DIR__ . '/../partials/navbar.php'; ?>
 
   <?php include __DIR__ . '/../partials/sidebar.php'; ?>
 
@@ -224,13 +200,14 @@
                       <label>Archivo de participantes</label>
                       <div class="border border-secondary rounded p-3 bg-light">
                         <p class="small mb-2">
-                          Formato sugerido: CSV o Excel con columnas como:
+                          Formato sugerido: CSV o Excel con columnas (los campos opcionales pueden estar vacíos):
                         </p>
                         <ul class="small mb-3">
-                          <li><span class="font-weight-bold">first_name</span> (nombres)</li>
-                          <li><span class="font-weight-bold">last_name</span> (apellidos)</li>
-                          <li><span class="font-weight-bold">email</span></li>
-                          <li><span class="font-weight-bold">identity_document</span></li>
+                          <li><span class="font-weight-bold">first_name</span> (nombres) - <em>Opcional si existe email/dni</em></li>
+                          <li><span class="font-weight-bold">last_name</span> (apellidos) - <em>Opcional si existe email/dni</em></li>
+                          <li><span class="font-weight-bold">email</span> (correo) - <em>Obligatorio si es nuevo</em></li>
+                          <li><span class="font-weight-bold">identity_document</span> (dni) - <em>Obligatorio si es nuevo</em></li>
+                          <li><span class="font-weight-bold">phone</span> (teléfono) - <em>Opcional</em></li>
                         </ul>
                         <div class="custom-file">
                           <input
@@ -291,19 +268,11 @@
     </section>
   </div>
 
-  <footer class="main-footer">
-    <div class="float-right d-none d-sm-inline">
-      Vistas preparadas para futura integración con PostgreSQL y QR.
-    </div>
-    <span>Módulo de Certificados QR dentro de aulavirtual, etapa de maquetación.</span>
-  </footer>
-
-  <aside class="control-sidebar control-sidebar-dark"></aside>
+  <?php include __DIR__ . '/../partials/footer.php'; ?>
 </div>
 
-<script src="assets/lte/plugins/jquery/jquery.min.js"></script>
-<script src="assets/lte/plugins/bootstrap/js/bootstrap.bundle.min.js"></script>
-<script src="assets/lte/dist/js/adminlte.min.js"></script>
+<?php include __DIR__ . '/../partials/scripts.php'; ?>
+<script src="assets/lte/plugins/bs-custom-file-input/bs-custom-file-input.min.js"></script>
 <script>
 $(document).ready(function() {
   function filterOptions(inputId, selectId) {

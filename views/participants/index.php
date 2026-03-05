@@ -1,37 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Participantes / Alumnos - Módulo Certificados QR</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
-  <link rel="stylesheet" href="assets/lte/plugins/fontawesome-free/css/all.min.css">
+  <?php include __DIR__ . '/../partials/head.php'; ?>
   <link rel="stylesheet" href="assets/lte/plugins/sweetalert2-theme-bootstrap-4/bootstrap-4.min.css">
-  <link rel="stylesheet" href="assets/lte/dist/css/adminlte.min.css">
 </head>
 <body class="hold-transition sidebar-mini">
 <div class="wrapper">
 
-  <nav class="main-header navbar navbar-expand navbar-white navbar-light">
-    <ul class="navbar-nav">
-      <li class="nav-item">
-        <a class="nav-link" data-widget="pushmenu" href="#" role="button"><i class="fas fa-bars"></i></a>
-      </li>
-      <li class="nav-item d-none d-sm-inline-block">
-        <a href="index.php" class="nav-link">Inicio</a>
-      </li>
-      <li class="nav-item d-none d-sm-inline-block">
-        <a href="index.php?page=logout" class="nav-link">Cerrar sesión</a>
-      </li>
-    </ul>
-    <ul class="navbar-nav ml-auto">
-      <li class="nav-item">
-        <a class="nav-link" data-widget="fullscreen" href="#" role="button">
-          <i class="fas fa-expand-arrows-alt"></i>
-        </a>
-      </li>
-    </ul>
-  </nav>
+  <?php include __DIR__ . '/../partials/navbar.php'; ?>
 
   <?php include __DIR__ . '/../partials/sidebar.php'; ?>
 
@@ -216,14 +192,7 @@
     </section>
   </div>
 
-  <footer class="main-footer">
-    <div class="float-right d-none d-sm-inline">
-      Vistas preparadas para futura integración con PostgreSQL y QR.
-    </div>
-    <span>Módulo de Certificados QR dentro de aulavirtual, etapa de maquetación.</span>
-  </footer>
-
-  <aside class="control-sidebar control-sidebar-dark"></aside>
+  <?php include __DIR__ . '/../partials/footer.php'; ?>
 </div>
 
 <!-- Modal Editar Participante -->
@@ -360,11 +329,8 @@
   </div>
 </div>
 
-<script src="assets/lte/plugins/jquery/jquery.min.js"></script>
-<script src="assets/lte/plugins/bootstrap/js/bootstrap.bundle.min.js"></script>
+<?php include __DIR__ . '/../partials/scripts.php'; ?>
 <script src="assets/lte/plugins/sweetalert2/sweetalert2.min.js"></script>
-<script src="assets/lte/dist/js/adminlte.min.js"></script>
-
 <script>
 $(document).ready(function() {
     // --- NUEVO: Gestión de Cursos ---

@@ -10,7 +10,6 @@ class UpdateController {
     private $updateUser = 'cliente_update';      // Usuario (si aplica)
     private $updatePassword = 'QrUpdate2026';  // Contraseña (si aplica)
     
-    private $currentVersion = '1.0.1';
     private $tempDir;
 
     public function __construct() {
@@ -38,7 +37,7 @@ class UpdateController {
 
     public function index() {
         $requirements = $this->checkSystemRequirements();
-        $currentVersion = $this->currentVersion;
+        $currentVersion = APP_VERSION;
         require __DIR__ . '/../views/updates/index.php';
     }
 
@@ -87,7 +86,7 @@ class UpdateController {
         }
 
         // Comparar versiones
-        if (version_compare($updateInfo['version'], $this->currentVersion, '>')) {
+        if (version_compare($updateInfo['version'], APP_VERSION, '>')) {
             echo json_encode([
                 'status' => 'success',
                 'update_available' => true,
@@ -100,7 +99,7 @@ class UpdateController {
             echo json_encode([
                 'status' => 'success',
                 'update_available' => false,
-                'message' => 'Tu sistema está actualizado. Tienes la última versión (' . $this->currentVersion . ').'
+                'message' => 'Tu sistema está actualizado. Tienes la última versión (' . APP_VERSION . ').'
             ]);
         }
         exit;
@@ -225,12 +224,22 @@ class UpdateController {
             // Buscamos un archivo con el nombre de la versión, ej: database/update_1.1.0.sql
             $version = $this->getUpdateVersionFromZipName($zipFile);
             if ($version) {
+                // Actualizar la versión en config/app.php
+                $this->updateAppVersion($version);
+                
+                // Ejecutar SQL si existe
                 $this->runSqlUpdate($version);
             }
             
             return true;
         }
         return false;
+    }
+
+    private function updateAppVersion($version) {
+        $configFile = __DIR__ . '/../config/app.php';
+        $content = "<?php\ndefine('APP_VERSION', '" . $version . "');\n";
+        file_put_contents($configFile, $content);
     }
 
     private function getUpdateVersionFromZipName($zipFile) {

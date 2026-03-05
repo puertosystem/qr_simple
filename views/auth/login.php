@@ -1,13 +1,8 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Iniciar sesión - Módulo Certificados QR</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
-  <link rel="stylesheet" href="assets/lte/plugins/fontawesome-free/css/all.min.css">
+  <?php include __DIR__ . '/../partials/head.php'; ?>
   <link rel="stylesheet" href="assets/lte/plugins/icheck-bootstrap/icheck-bootstrap.min.css">
-  <link rel="stylesheet" href="assets/lte/dist/css/adminlte.min.css">
 </head>
 <body class="hold-transition login-page">
 <div class="login-box">
@@ -63,8 +58,6 @@
   </div>
 </div>
 
-<script src="assets/lte/plugins/jquery/jquery.min.js"></script>
-<script src="assets/lte/plugins/bootstrap/js/bootstrap.bundle.min.js"></script>
-<script src="assets/lte/dist/js/adminlte.min.js"></script>
+<?php include __DIR__ . '/../partials/scripts.php'; ?>
 </body>
 </html>

@@ -1,23 +1,12 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Licencia y Versión - Módulo Certificados QR</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
-  <link rel="stylesheet" href="assets/lte/plugins/fontawesome-free/css/all.min.css">
-  <link rel="stylesheet" href="assets/lte/dist/css/adminlte.min.css">
+  <?php include __DIR__ . '/../partials/head.php'; ?>
 </head>
 <body class="hold-transition sidebar-mini">
 <div class="wrapper">
 
-  <nav class="main-header navbar navbar-expand navbar-white navbar-light">
-    <ul class="navbar-nav">
-      <li class="nav-item">
-        <a class="nav-link" data-widget="pushmenu" href="#" role="button"><i class="fas fa-bars"></i></a>
-      </li>
-    </ul>
-  </nav>
+  <?php include __DIR__ . '/../partials/navbar.php'; ?>
 
   <?php include __DIR__ . '/../partials/sidebar.php'; ?>
 
@@ -104,16 +93,9 @@
     </section>
   </div>
   
-  <footer class="main-footer">
-    <div class="float-right d-none d-sm-block">
-      <b>Version</b> <?php echo $licenseData['version'] ?? '1.0.0'; ?>
-    </div>
-    <strong>&copy; <?php echo date('Y'); ?> Sistema de Certificados.</strong>
-  </footer>
+  <?php include __DIR__ . '/../partials/footer.php'; ?>
 </div>
 
-<script src="assets/lte/plugins/jquery/jquery.min.js"></script>
-<script src="assets/lte/plugins/bootstrap/js/bootstrap.bundle.min.js"></script>
-<script src="assets/lte/dist/js/adminlte.min.js"></script>
+<?php include __DIR__ . '/../partials/scripts.php'; ?>
 </body>
 </html>

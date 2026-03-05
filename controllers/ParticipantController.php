@@ -375,7 +375,9 @@ class ParticipantController
             exit;
         }
 
+        // Encabezados claros
         fputcsv($output, ['first_name', 'last_name', 'email', 'identity_document', 'phone', 'notes']);
+        
         fclose($output);
         exit;
     }
@@ -446,11 +448,11 @@ class ParticipantController
             }
         }
 
-        $requiredColumns = ['first_name', 'last_name', 'email', 'identity_document'];
+        $requiredColumns = ['email', 'identity_document'];
         foreach ($requiredColumns as $column) {
             if (!isset($headerMap[$column])) {
                 fclose($handle);
-                return [null, 'El archivo debe contener las columnas: first_name, last_name, email, identity_document.'];
+                return [null, 'El archivo debe contener al menos las columnas: email, identity_document.'];
             }
         }
 
@@ -468,16 +470,18 @@ class ParticipantController
         $createdEnrollments = 0;
         $skippedExistingEnrollment = 0;
         $skippedInvalidRow = 0;
+        $skippedMissingData = 0;
 
         foreach ($rows as $index => $data) {
-            $firstName = trim($data[$headerMap['first_name']] ?? '');
-            $lastName = trim($data[$headerMap['last_name']] ?? '');
+            $firstName = isset($headerMap['first_name']) ? trim($data[$headerMap['first_name']] ?? '') : '';
+            $lastName = isset($headerMap['last_name']) ? trim($data[$headerMap['last_name']] ?? '') : '';
             $email = trim($data[$headerMap['email']] ?? '');
             $identityDocument = trim($data[$headerMap['identity_document']] ?? '');
             $phone = isset($headerMap['phone']) ? trim($data[$headerMap['phone']] ?? '') : '';
             $notes = isset($headerMap['notes']) ? trim($data[$headerMap['notes']] ?? '') : '';
 
-            if ($firstName === '' || $lastName === '' || $email === '' || $identityDocument === '') {
+            // Si faltan identificadores clave, saltar
+            if ($email === '' && $identityDocument === '') {
                 $skippedInvalidRow++;
                 continue;
             }
@@ -485,15 +489,45 @@ class ParticipantController
             try {
                 $pdo->beginTransaction();
 
-                $participantId = $this->findOrCreateParticipant(
-                    $firstName,
-                    $lastName,
-                    $email,
-                    $identityDocument,
-                    $phone,
-                    $notes
-                );
+                // 1. Buscar si ya existe
+                $existingParticipant = null;
+                if ($email) {
+                    $existingParticipant = $this->participantModel->findByEmail($email);
+                }
+                if (!$existingParticipant && $identityDocument) {
+                    $existingParticipant = $this->participantModel->findByIdentityDocument($identityDocument);
+                }
 
+                $participantId = 0;
+
+                if ($existingParticipant) {
+                    // Existe: usar su ID
+                    $participantId = (int)$existingParticipant['id'];
+                    
+                    // Opcional: Actualizar datos si vienen en el CSV y están vacíos en la BD?
+                    // Por ahora, solo usamos el existente.
+                } else {
+                    // No existe: Intentar crear
+                    // Para crear, necesitamos Nombres y Apellidos obligatoriamente
+                    if ($firstName === '' || $lastName === '') {
+                        $pdo->rollBack();
+                        $skippedMissingData++; // Nuevo contador para "falta nombre/apellido en registro nuevo"
+                        continue;
+                    }
+
+                    // Crear nuevo
+                    $participantId = $this->participantModel->create([
+                        'first_name' => $firstName,
+                        'last_name' => $lastName,
+                        'email' => $email,
+                        'identity_document' => $identityDocument,
+                        'phone' => $phone,
+                        'notes' => $notes,
+                        'country' => null
+                    ]);
+                }
+
+                // 2. Matricular
                 $existingEnrollment = $this->participantModel->findEnrollment((int)$courseId, $participantId);
                 if ($existingEnrollment !== null) {
                     $pdo->rollBack();
@@ -505,18 +539,20 @@ class ParticipantController
 
                 $pdo->commit();
                 $createdEnrollments++;
+
             } catch (Throwable $e) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
                 $skippedInvalidRow++;
-                error_log('Error en carga masiva: ' . $e->getMessage());
+                error_log('Error en carga masiva fila ' . ($index + 2) . ': ' . $e->getMessage());
             }
         }
 
         $message = 'Carga masiva completada. Se crearon ' . $createdEnrollments . ' matrículas.';
-        if ($skippedExistingEnrollment > 0) $message .= ' Se omitieron ' . $skippedExistingEnrollment . ' registros ya inscritos.';
-        if ($skippedInvalidRow > 0) $message .= ' Se omitieron ' . $skippedInvalidRow . ' filas inválidas/errores.';
+        if ($skippedExistingEnrollment > 0) $message .= ' Se omitieron ' . $skippedExistingEnrollment . ' ya inscritos.';
+        if ($skippedMissingData > 0) $message .= ' Se omitieron ' . $skippedMissingData . ' nuevos sin nombre/apellido.';
+        if ($skippedInvalidRow > 0) $message .= ' Se omitieron ' . $skippedInvalidRow . ' con errores.';
 
         return [$message, null];
     }
