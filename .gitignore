@@ -5,3 +5,10 @@ node_modules/
 .DS_Store
 Thumbs.db
 config/config.php
+
+# Ignore update packages
+update_*.zip
+*.zip
+
+# Ignore license key file
+config/license.key

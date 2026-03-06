@@ -39,8 +39,25 @@
                 <div class="text-center mb-4">
                   <i class="fas fa-certificate fa-3x text-success"></i>
                   <h3 class="mt-2"><?php echo $licenseData['productname'] ?? 'Producto Desconocido'; ?></h3>
-                  <p class="text-muted">Versión <?php echo $licenseData['version'] ?? '1.0.0'; ?></p>
+                  <p class="text-muted">Versión <?php echo defined('APP_VERSION') ? APP_VERSION : ($licenseData['version'] ?? '1.0.0'); ?></p>
                 </div>
+
+                <form action="index.php?view=license&action=save_license" method="post" class="mb-4">
+                    <div class="form-group">
+                        <label for="license_key">Clave de Licencia</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="license_key" name="license_key" 
+                                   value="<?php echo htmlspecialchars($licenseKey ?? ''); ?>" 
+                                   placeholder="Ingrese su clave de licencia aquí (ej. LICENSE-KEY-123)" required>
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-primary" type="submit">
+                                    <i class="fas fa-save"></i> Guardar
+                                </button>
+                            </div>
+                        </div>
+                        <small class="form-text text-muted">Esta clave se utilizará para validar su instalación.</small>
+                    </div>
+                </form>
 
                 <ul class="list-group list-group-unbordered mb-3">
                   <li class="list-group-item">
@@ -64,7 +81,11 @@
                   </li>
                 </ul>
 
-                <a href="#" class="btn btn-primary btn-block"><b>Verificar Licencia Ahora</b></a>
+                <a href="index.php?view=license" class="btn btn-primary btn-block"><b>Verificar Licencia Ahora</b></a>
+                
+                <div class="mt-3 text-center text-muted text-xs">
+                    <i class="fas fa-info-circle"></i> Los datos de licencia se validan contra el servidor central de Puerto System.
+                </div>
               </div>
             </div>
           </div>
@@ -81,7 +102,10 @@
                 </p>
                 <hr>
                 <strong><i class="fas fa-code mr-1"></i> Desarrollado por</strong>
-                <p class="text-muted">Equipo de Desarrollo</p>
+                <p class="text-muted">
+                    <a href="https://puertosystem.com" target="_blank">Puerto System, S.A.</a><br>
+                    <small>Diseñado por: <a href="https://norbertoramirez.com/" target="_blank">Norberto Ramirez</a> & <a href="https://postsdigital.com/" target="_blank">POSTS Digital</a></small>
+                </p>
                 <hr>
                 <strong><i class="far fa-file-alt mr-1"></i> Frameworks</strong>
                 <p class="text-muted">PHP Nativo, AdminLTE 3, TCPDF, PHPQRCode</p>

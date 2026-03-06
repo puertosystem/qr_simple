@@ -299,6 +299,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         @unlink($zipPath);
     }
 
+    // Validar archivos de base de datos requeridos
+    $requiredDbFiles = [
+        'views/updates/update_server_db.sql',
+        'views/updates/apply_updates.php'
+    ];
+    
+    foreach ($requiredDbFiles as $reqFile) {
+        if (!file_exists($rootDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $reqFile))) {
+             sendMsg('error', "Falta archivo requerido: $reqFile. Asegúrate de que exista en la carpeta views/updates/.");
+             exit;
+        }
+    }
+
     $zip = new ZipArchive();
     if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== TRUE) {
         sendMsg('error', 'No se puede crear el archivo ZIP. Verifica permisos.');

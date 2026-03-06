@@ -81,6 +81,29 @@
               <p>Certificados</p>
             </a>
           </li>
+          <li class="nav-item has-treeview <?php echo (isset($_GET['page']) && $_GET['page'] === 'constancias') ? 'menu-open' : ''; ?>">
+            <a href="#" class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] === 'constancias') ? 'active' : ''; ?>">
+              <i class="nav-icon fas fa-award"></i>
+              <p>
+                Constancias
+                <i class="right fas fa-angle-left"></i>
+              </p>
+            </a>
+            <ul class="nav nav-treeview">
+              <li class="nav-item">
+                <a href="index.php?page=constancias" class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] === 'constancias' && (!isset($_GET['view']) || $_GET['view'] === 'index')) ? 'active' : ''; ?>">
+                  <i class="far fa-circle nav-icon"></i>
+                  <p>Eventos</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="index.php?page=constancias&view=leads" class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] === 'constancias' && isset($_GET['view']) && $_GET['view'] === 'leads') ? 'active' : ''; ?>">
+                  <i class="far fa-circle nav-icon"></i>
+                  <p>Participantes</p>
+                </a>
+              </li>
+            </ul>
+          </li>
           <li class="nav-item <?php echo (isset($_GET['page']) && ($_GET['page'] === 'settings' || $_GET['page'] === 'users')) ? 'menu-open' : ''; ?>">
             <a href="#" class="nav-link <?php echo (isset($_GET['page']) && ($_GET['page'] === 'settings' || $_GET['page'] === 'users')) ? 'active' : ''; ?>">
               <i class="nav-icon fas fa-cogs"></i>

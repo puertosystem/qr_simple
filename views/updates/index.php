@@ -48,6 +48,18 @@
                                 <!-- Mensajes de actualización -->
                             </div>
 
+                            <?php if (isset($dbUpdateAvailable) && $dbUpdateAvailable): ?>
+                            <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                                <h5><i class="icon fas fa-exclamation-triangle"></i> ¡Atención!</h5>
+                                Se ha detectado una actualización de base de datos pendiente.
+                                <hr>
+                                <button type="button" class="btn btn-warning btn-block font-weight-bold" onclick="applyDbUpdate(this)">
+                                    <i class="fas fa-database mr-2"></i> Actualizar Base de Datos Ahora
+                                </button>
+                                <div id="db-update-result" class="mt-2"></div>
+                            </div>
+                            <?php endif; ?>
+
                             <button type="button" class="btn btn-primary btn-lg mt-3" id="btn-check-update">
                                 <i class="fas fa-cloud-download-alt mr-2"></i> Comprobar Actualización
                             </button>

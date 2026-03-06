@@ -21,7 +21,7 @@ class UpdateController {
 
     public function handleRequest() {
         $action = isset($_GET['action']) ? $_GET['action'] : 'index';
-
+        
         switch ($action) {
             case 'check':
                 $this->checkUpdate();
@@ -29,15 +29,53 @@ class UpdateController {
             case 'process':
                 $this->processUpdate();
                 break;
+            case 'apply_db':
+                $this->applyDbUpdate();
+                break;
             default:
                 $this->index();
                 break;
         }
     }
 
+    public function applyDbUpdate() {
+        header('Content-Type: application/json');
+        
+        $sqlFile = __DIR__ . '/../views/updates/update_server_db.sql';
+        
+        if (!file_exists($sqlFile)) {
+            echo json_encode(['status' => 'error', 'message' => 'No se encontró el archivo de actualización de base de datos (views/updates/update_server_db.sql).']);
+            exit;
+        }
+        
+        try {
+            require_once __DIR__ . '/../config/database.php';
+            $pdo = Database::getConnection();
+            
+            $sql = file_get_contents($sqlFile);
+            
+            // Ejecutar consultas
+            $pdo->exec($sql);
+            
+            // Eliminar el archivo después de actualizar para evitar que se ejecute de nuevo
+            @unlink($sqlFile);
+            
+            echo json_encode(['status' => 'success', 'message' => 'Base de datos actualizada correctamente.']);
+        } catch (Exception $e) {
+            error_log('Error actualizando BD: ' . $e->getMessage());
+            echo json_encode(['status' => 'error', 'message' => 'Error al ejecutar SQL: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
     public function index() {
         $requirements = $this->checkSystemRequirements();
         $currentVersion = APP_VERSION;
+        
+        // Verificar si existe una actualización de base de datos pendiente
+        $sqlFile = __DIR__ . '/../views/updates/update_server_db.sql';
+        $dbUpdateAvailable = file_exists($sqlFile);
+        
         require __DIR__ . '/../views/updates/index.php';
     }
 

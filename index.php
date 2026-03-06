@@ -52,6 +52,10 @@ if ($page === 'participants') {
     require __DIR__ . '/controllers/ParticipantController.php';
     $controller = new ParticipantController();
     $controller->handleRequest();
+} elseif ($page === 'constancias') {
+    require __DIR__ . '/controllers/ConstanciaController.php';
+    $controller = new ConstanciaController();
+    $controller->handleRequest();
 } elseif ($page === 'courses') {
     require __DIR__ . '/controllers/CourseController.php';
     $controller = new CourseController();

@@ -4,6 +4,12 @@ class SettingsController {
     
     public function handleRequest() {
         $view = isset($_GET['view']) ? $_GET['view'] : 'license';
+        $action = isset($_GET['action']) ? $_GET['action'] : '';
+
+        if ($action === 'save_license' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            $this->saveLicense();
+            return;
+        }
 
         switch ($view) {
             case 'license':
@@ -15,8 +21,26 @@ class SettingsController {
         }
     }
 
+    public function saveLicense() {
+        $newKey = isset($_POST['license_key']) ? trim($_POST['license_key']) : '';
+        
+        // Guardar en archivo (simple storage por ahora)
+        $configFile = __DIR__ . '/../config/license.key';
+        file_put_contents($configFile, $newKey);
+        
+        // Redireccionar con mensaje
+        header('Location: index.php?view=license&status=saved');
+        exit;
+    }
+
     public function license() {
-        $licenseKey = 'LICENSE-KEY-DEMO-123'; // Placeholder or fetch from DB/Config
+        // Leer licencia desde archivo
+        $configFile = __DIR__ . '/../config/license.key';
+        $licenseKey = file_exists($configFile) ? file_get_contents($configFile) : '';
+        
+        // Si está vacía, usar placeholder para visualización si se desea, 
+        // pero mejor dejarla vacía para que el usuario sepa que debe ingresarla.
+        
         $localKey = ''; // Local key storage if needed
         
         // Mock WHMCS check
@@ -26,20 +50,30 @@ class SettingsController {
     }
 
     private function checkLicense($licenseKey) {
-        // Here you would implement the actual call to your WHMCS installation
-        // using the check_token action or similar.
-        // For now, we return a mock response.
-        
+        // ------------------------------------------------------------------
+        // LÓGICA DE VALIDACIÓN DE LICENCIA (SIMULACIÓN)
+        // ------------------------------------------------------------------
+        // Para validar realmente contra un servidor externo (ej. tu web principal),
+        // deberías usar cURL para enviar la $licenseKey a tu API endpoint.
+        //
+        // Ejemplo de implementación real:
+        // $apiUrl = 'https://puertosystem.com/api/validate-license';
+        // $response = file_get_contents($apiUrl . '?key=' . $licenseKey . '&domain=' . $_SERVER['HTTP_HOST']);
+        // $data = json_decode($response, true);
+        // return $data;
+        // ------------------------------------------------------------------
+
+        // Por ahora, retornamos datos simulados "Activos"
         return [
-            'status' => 'Active',
+            'status' => 'Active', // Active, Suspended, Expired
             'message' => 'Licencia válida',
-            'registeredname' => 'Usuario Demo',
+            'registeredname' => 'Cliente Final',
             'productname' => 'Sistema de Certificados QR Pro',
             'validdomain' => $_SERVER['HTTP_HOST'],
             'validip' => $_SERVER['SERVER_ADDR'] ?? '127.0.0.1',
             'checkdate' => date('Y-m-d'),
             'nextduedate' => date('Y-m-d', strtotime('+1 year')),
-            'version' => '1.0.0'
+            'version' => defined('APP_VERSION') ? APP_VERSION : '1.0.0'
         ];
     }
 }

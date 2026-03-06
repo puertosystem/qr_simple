@@ -21,7 +21,7 @@ class AuthController {
 
             $user = $this->userModel->findByEmail($email);
 
-            if ($user && password_verify($password, $user['password'])) {
+            if ($user && password_verify($password, $user['password_hash'])) {
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['user_name'] = $user['name'] ?? $user['username'] ?? 'Admin';
                 $_SESSION['user_email'] = $user['email'] ?? '';

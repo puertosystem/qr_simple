@@ -82,13 +82,13 @@ function startUpdate() {
             if (response.status === 'success') {
                 resultArea.removeClass('alert-warning').addClass('alert-success');
                 resultArea.html(`
-                    <h5><i class="icon fas fa-check"></i> ¡Actualización Completada!</h5>
+                    <h5><i class="icon fas fa-check"></i> ¡Archivos Actualizados!</h5>
                     <p>${response.message}</p>
-                    <p>El sistema se recargará en 5 segundos...</p>
+                    <hr>
+                    <p><strong>Paso final:</strong> Por favor actualice la base de datos para completar el proceso.</p>
+                    <button id="btn-db-update" class="btn btn-warning btn-lg btn-block" onclick="applyDbUpdate()"><i class="fas fa-database"></i> Actualizar Base de Datos</button>
+                    <div id="db-update-result" class="mt-3"></div>
                 `);
-                setTimeout(function() {
-                    location.reload();
-                }, 5000);
             } else {
                 resultArea.removeClass('alert-warning').addClass('alert-danger');
                 resultArea.html(`
@@ -108,6 +108,52 @@ function startUpdate() {
                 <p>Detalles: ${xhr.status} - ${error}</p>
             `);
             btn.prop('disabled', false).removeClass('d-none');
+        }
+    });
+}
+
+function applyDbUpdate(element) {
+    var btn;
+    if (element) {
+        btn = $(element);
+    } else {
+        // Fallback para llamadas antiguas o sin parámetro
+        btn = $('button[onclick*="applyDbUpdate"]');
+    }
+    
+    var resultArea = $('#db-update-result');
+    
+    // Si no encontramos el área de resultados, intentamos crearla o buscarla cerca del botón
+    if (resultArea.length === 0 && btn.length > 0) {
+        // Si el botón está en la alerta persistente, el div ya debería estar ahí
+        // Si no, lo creamos después del botón
+        btn.after('<div id="db-update-result" class="mt-3"></div>');
+        resultArea = $('#db-update-result');
+    }
+
+    btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Actualizando Base de Datos...');
+    
+    $.ajax({
+        url: 'index.php?page=updates&action=apply_db',
+        method: 'GET',
+        dataType: 'json',
+        success: function(response) {
+            if (response.status === 'success') {
+                btn.removeClass('btn-warning').addClass('btn-success').html('<i class="fas fa-check"></i> Base de Datos Actualizada');
+                resultArea.html(`<div class="alert alert-success mt-2">${response.message}</div>`);
+                
+                // Recargar después de unos segundos
+                setTimeout(function() {
+                   location.reload();
+                }, 2000);
+            } else {
+                btn.prop('disabled', false).html('<i class="fas fa-database"></i> Reintentar Actualización BD');
+                resultArea.html(`<div class="alert alert-danger mt-2">Error: ${response.message}</div>`);
+            }
+        },
+        error: function(xhr, status, error) {
+            btn.prop('disabled', false).html('<i class="fas fa-database"></i> Reintentar Actualización BD');
+            resultArea.html(`<div class="alert alert-danger mt-2">Error de conexión: ${xhr.status} - ${error}</div>`);
         }
     });
 }
