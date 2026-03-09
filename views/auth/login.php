@@ -54,6 +54,16 @@
           Cada certificado generado incluirá un código QR que apunta a la URL pública de validación.
         </p>
       </div>
+
+      <div class="mt-4 text-center text-muted" style="font-size: 0.8rem; border-top: 1px solid #eee; padding-top: 15px;">
+          <p class="mb-1">
+              Copyright &copy; <?php echo date('Y'); ?> 
+              <a href="https://www.linkedin.com/company/puertosystem/" target="_blank">Puerto System, S.A.</a>
+          </p>
+          <p class="mb-0">
+              Desarrollado por: <a href="https://www.linkedin.com/in/norberto-ramirez/" target="_blank">Norberto Ramirez</a> & <a href="https://postsdigital.com/" target="_blank">POSTS Digital</a> - v<?php echo APP_VERSION; ?>
+          </p>
+      </div>
     </div>
   </div>
 </div>

@@ -80,6 +80,13 @@ class ConstanciaEvento
         return $stmt->fetch();
     }
 
+    public function getLatestConstancia($leadId)
+    {
+        $stmt = $this->pdo->prepare("SELECT * FROM constancias WHERE lead_id = ? ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$leadId]);
+        return $stmt->fetch();
+    }
+
     public function createConstancia($data)
     {
         $sql = "INSERT INTO constancias (lead_id, evento_id, codigo_verificacion, qr_codigo, fecha_generacion, ip_generacion, user_agent) VALUES (?, ?, ?, ?, NOW(), ?, ?)";
@@ -95,6 +102,28 @@ class ConstanciaEvento
         return $this->pdo->lastInsertId();
     }
 
+    public function incrementDownload($id)
+    {
+        try {
+            // Actualiza contador y fechas
+            $sql = "UPDATE constancias SET 
+                    num_descargas = num_descargas + 1, 
+                    fecha_ultima_descarga = NOW(),
+                    fecha_primera_descarga = COALESCE(fecha_primera_descarga, NOW()) 
+                    WHERE id = ?";
+            $stmt = $this->pdo->prepare($sql);
+            return $stmt->execute([$id]);
+        } catch (PDOException $e) {
+            // Si falla por columnas faltantes, ignoramos silenciosamente para no bloquear la descarga
+            // Error 1054: Unknown column
+            if ($e->getCode() == '42S22' || strpos($e->getMessage(), 'Column not found') !== false) {
+                error_log("Advertencia: No se pudo actualizar contador de descargas (columnas faltantes).");
+                return false;
+            }
+            throw $e;
+        }
+    }
+
     public function generateUniqueCode()
     {
         $prefix = 'CONST-';
@@ -105,5 +134,21 @@ class ConstanciaEvento
             $exists = $stmt->fetchColumn() > 0;
         } while ($exists);
         return $code;
+    }
+
+    public function getConstanciaByCode($code)
+    {
+        $sql = "SELECT 
+                    c.*, 
+                    l.nombres, l.apellidos, l.documento_identidad, 
+                    e.nombre as evento_nombre, e.fecha_inicio, e.fecha_fin
+                FROM constancias c
+                JOIN constancia_leads l ON c.lead_id = l.id
+                JOIN constancia_eventos e ON c.evento_id = e.id
+                WHERE c.codigo_verificacion = ?";
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute([$code]);
+        return $stmt->fetch();
     }
 }

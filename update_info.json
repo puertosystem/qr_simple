@@ -1,8 +1,8 @@
 {
-    "version": "1.0.7",
+    "version": "1.1.18",
     "date": "2026-03-05",
     "description": "Mejoras en el sistema de actualizaciones: Inclusión automática de scripts de base de datos y uso de credenciales del cliente.",
-    "download_url": "https://puertosystem.com/updates/qr_simple/update_1.0.7.zip",
+    "download_url": "https://puertosystem.com/updates/qr_simple/update_1.1.18.zip",
     "requirements": {
         "php": "7.4"
     }

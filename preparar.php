@@ -9,10 +9,10 @@ $excludeItems = [
     '.git', '.gitignore', '.idea', '.vscode', 'server_config', 'temp_updates',
     'create_update.ps1', 'preparar.php', 'config/config.php', 'config/database.php',
     'README.md', 'LICENSE', 'template', 'composer.json', 'composer.lock',
-    'ftp_config.json' // Excluir config FTP del ZIP
+    'ftp_config.json', 'database', 'images' // Excluir config FTP, carpeta database y carpeta images del ZIP
 ];
 
-$foldersToEmpty = ['images/auspicio', 'images/plantilla'];
+$foldersToEmpty = []; // Ya no vaciamos, simplemente excluimos toda la carpeta images
 $excludeExtensions = ['zip', 'rar', 'gz'];
 
 $rootDir = __DIR__;
@@ -244,7 +244,109 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
         file_put_contents($jsonPath, json_encode($jsonData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 
+    // 3. Actualizar update_server_db.sql con la versión de la base de datos y RENOMBRARLO
+    $dbVersion = $_POST['db_version'] ?? '';
+    
+    // Buscar archivo existente
+    $sqlFiles = glob(__DIR__ . '/views/updates/update_server_db*.sql');
+    $currentSqlPath = !empty($sqlFiles) ? end($sqlFiles) : __DIR__ . '/views/updates/update_server_db.sql';
+    
+    // Nuevo nombre de archivo basado en la versión
+    $newSqlFileName = "update_server_db_{$dbVersion}.sql";
+    $newSqlPath = __DIR__ . "/views/updates/{$newSqlFileName}";
+
+    if ($dbVersion) {
+        // Si no existe el archivo actual, crearlo (caso base)
+        if (!file_exists($currentSqlPath)) {
+            $sqlContent = "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('app_version', '$dbVersion') ON DUPLICATE KEY UPDATE `valor` = '$dbVersion';";
+            file_put_contents($newSqlPath, $sqlContent);
+        } else {
+            $sqlContent = file_get_contents($currentSqlPath);
+            
+            // Buscar y reemplazar la versión en el INSERT/UPDATE
+            $pattern = "/VALUES \('app_version', '.*?'\)/";
+            $replacement = "VALUES ('app_version', '$dbVersion')";
+            $newSqlContent = preg_replace($pattern, $replacement, $sqlContent);
+            
+            $pattern2 = "/UPDATE `valor` = '.*?'/";
+            $replacement2 = "UPDATE `valor` = '$dbVersion'";
+            $newSqlContent = preg_replace($pattern2, $replacement2, $newSqlContent);
+
+            // Escribir en el nuevo archivo (o sobrescribir si es el mismo)
+            file_put_contents($newSqlPath, $newSqlContent);
+            
+            // Si el nombre cambió, borrar el viejo
+            if (realpath($currentSqlPath) !== realpath($newSqlPath)) {
+                unlink($currentSqlPath);
+            }
+        }
+    }
+
     echo json_encode(['status' => 'success', 'message' => 'Versión y archivos actualizados correctamente.']);
+    exit;
+}
+
+// Acción: Exportar Base de Datos Local
+if (isset($_POST['action']) && $_POST['action'] === 'export_db') {
+    header('Content-Type: application/json');
+    
+    $version = $_POST['version'] ?? '1.0.0';
+    $exportType = $_POST['type'] ?? 'structure'; // structure, full
+    
+    require_once __DIR__ . '/config/database.php';
+    
+    try {
+        $pdo = Database::getConnection();
+        $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+        
+        $sql = "-- Actualización de Base de Datos - Versión $version\n";
+        $sql .= "-- Generado automáticamente desde preparar.php\n\n";
+        $sql .= "SET FOREIGN_KEY_CHECKS=0;\n\n";
+        
+        foreach ($tables as $table) {
+            // Estructura
+            $stmt = $pdo->query("SHOW CREATE TABLE `$table`");
+            $row = $stmt->fetch(PDO::FETCH_NUM);
+            if ($row) {
+                $createTable = $row[1];
+                // Asegurar IF NOT EXISTS
+                $createTable = preg_replace('/^CREATE TABLE/', 'CREATE TABLE IF NOT EXISTS', $createTable);
+                $sql .= "-- Estructura de tabla `$table`\n";
+                $sql .= "$createTable;\n\n";
+            }
+            
+            // Datos (si se requiere, por ahora solo estructura para actualizaciones seguras)
+            // Para actualizaciones, mejor NO exportar datos masivos para no sobrescribir clientes.
+        }
+        
+        $sql .= "-- Actualizar versión de base de datos\n";
+        $sql .= "CREATE TABLE IF NOT EXISTS `configuracion` (\n";
+        $sql .= "  `clave` varchar(50) NOT NULL,\n";
+        $sql .= "  `valor` text,\n";
+        $sql .= "  PRIMARY KEY (`clave`)\n";
+        $sql .= ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n";
+        
+        $sql .= "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('app_version', '$version')\n";
+        $sql .= "ON DUPLICATE KEY UPDATE `valor` = '$version';\n\n";
+        
+        $sql .= "SET FOREIGN_KEY_CHECKS=1;\n";
+        
+        // Limpiar archivos anteriores
+        $oldFiles = glob(__DIR__ . '/views/updates/update_server_db*.sql');
+        foreach ($oldFiles as $file) {
+            @unlink($file);
+        }
+        
+        // Guardar nuevo archivo
+        $filename = "update_server_db_{$version}.sql";
+        $filepath = __DIR__ . "/views/updates/{$filename}";
+        file_put_contents($filepath, $sql);
+        
+        echo json_encode(['status' => 'success', 'message' => "Base de datos exportada correctamente a views/updates/$filename"]);
+        
+    } catch (Exception $e) {
+        echo json_encode(['status' => 'error', 'message' => 'Error exportando BD: ' . $e->getMessage()]);
+    }
     exit;
 }
 
@@ -256,6 +358,19 @@ if (file_exists($jsonPath)) {
 $formVersion = $currentJsonData['version'] ?? $version; // $version viene de UpdateController
 $formDate = $currentJsonData['date'] ?? date('Y-m-d');
 $formDesc = $currentJsonData['description'] ?? '';
+
+// Leer versión actual de la base de datos del archivo SQL
+$sqlFiles = glob(__DIR__ . '/views/updates/update_server_db*.sql');
+$sqlPath = !empty($sqlFiles) ? end($sqlFiles) : '';
+$formDbVersion = $formVersion; // Por defecto igual a la del sistema
+
+if ($sqlPath && file_exists($sqlPath)) {
+    $sqlContent = file_get_contents($sqlPath);
+    if (preg_match("/VALUES \('app_version', '(.*?)'\)/", $sqlContent, $matches)) {
+        $formDbVersion = $matches[1];
+    }
+}
+
 
 // Leer configuración FTP si existe
 $ftpHost = '';
@@ -300,16 +415,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
     }
 
     // Validar archivos de base de datos requeridos
-    $requiredDbFiles = [
-        'views/updates/update_server_db.sql',
-        'views/updates/apply_updates.php'
-    ];
-    
-    foreach ($requiredDbFiles as $reqFile) {
-        if (!file_exists($rootDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $reqFile))) {
-             sendMsg('error', "Falta archivo requerido: $reqFile. Asegúrate de que exista en la carpeta views/updates/.");
-             exit;
-        }
+    // update_server_db.sql ahora es versionado, así que verificamos si existe alguno
+    $dbFiles = glob($rootDir . '/views/updates/update_server_db*.sql');
+    if (empty($dbFiles)) {
+         sendMsg('error', "Falta archivo SQL de actualización (views/updates/update_server_db*.sql).");
+         exit;
+    }
+
+    if (!file_exists($rootDir . '/views/updates/apply_updates.php')) {
+         sendMsg('error', "Falta archivo requerido: views/updates/apply_updates.php.");
+         exit;
     }
 
     $zip = new ZipArchive();
@@ -444,6 +559,26 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
                             </div>
 
                             <div class="form-group">
+                                <label class="text-muted small text-uppercase font-weight-bold">Versión de Base de Datos</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control font-weight-bold text-info" id="db-version-input" name="db_version" value="<?php echo $formDbVersion; ?>" style="font-size: 1.2rem;">
+                                    <div class="input-group-append">
+                                        <button class="btn btn-outline-info" type="button" id="btn-sync-db" title="Sincronizar con Versión del Sistema">
+                                            <i class="fas fa-sync"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success btn-export-db-action" type="button" title="Exportar Estructura BD Local">
+                                            <i class="fas fa-database"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <small class="form-text text-muted">
+                                    Define la versión de la estructura de base de datos. <br>
+                                    <i class="fas fa-database text-success"></i> Exporta la estructura local actual a un archivo SQL versionado.
+                                </small>
+                            </div>
+
+
+                            <div class="form-group">
                                 <label class="text-muted small text-uppercase font-weight-bold">Fecha de Lanzamiento</label>
                                 <input type="date" class="form-control" name="date" value="<?php echo $formDate; ?>">
                             </div>
@@ -462,10 +597,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
                             </div>
 
                             <div class="mt-4">
-                                <button type="submit" class="btn btn-success btn-block shadow-sm" id="btn-save-version">
-                                    <i class="fas fa-save mr-2"></i>Guardar Configuración
+                                <button type="button" class="btn btn-info" id="btn-update-version">
+                                    <i class="fas fa-save mr-1"></i> Actualizar Versión (Solo Config)
                                 </button>
-                                <div id="version-msg" class="mt-2 text-center small font-weight-bold" style="min-height: 20px;"></div>
+                                <button type="button" class="btn btn-success ml-2 btn-export-db-action">
+                                    <i class="fas fa-database mr-1"></i> Exportar Estructura BD Local
+                                </button>
+                                <div id="version-msg" class="mt-2 text-left small font-weight-bold" style="min-height: 20px;"></div>
                             </div>
                         </form>
                     </div>
@@ -637,7 +775,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         const versionForm = document.getElementById('version-form');
         const versionInput = document.getElementById('version-input');
         const btnIncrement = document.getElementById('btn-increment');
-        const btnSaveVersion = document.getElementById('btn-save-version');
+        const btnUpdateVersion = document.getElementById('btn-update-version');
         const versionMsg = document.getElementById('version-msg');
         const displayVersionBadge = document.getElementById('display-version-badge');
         const displayFilename = document.getElementById('display-filename');
@@ -653,46 +791,65 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
             }
         });
 
-        // Guardar versión
-        versionForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const formData = new FormData(versionForm);
-            formData.append('action', 'update_version');
+        // Sincronizar versión de DB
+        const btnSyncDb = document.getElementById('btn-sync-db');
+        const dbVersionInput = document.getElementById('db-version-input');
 
-            btnSaveVersion.disabled = true;
-            versionMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...';
-            versionMsg.className = 'mt-2 text-center small font-weight-bold text-info';
-
-            fetch('preparar.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                btnSaveVersion.disabled = false;
-                if (data.status === 'success') {
-                    versionMsg.innerHTML = '<i class="fas fa-check"></i> Guardado';
-                    versionMsg.className = 'mt-2 text-center small font-weight-bold text-success';
-                    
-                    // Actualizar vista previa
-                    const newVer = formData.get('version');
-                    if(displayVersionBadge) displayVersionBadge.textContent = newVer;
-                    displayFilename.textContent = `update_${newVer}.zip`;
-                    
-                    // Resetear mensaje después de 3 seg
-                    setTimeout(() => { versionMsg.innerHTML = ''; }, 3000);
-                } else {
-                    versionMsg.textContent = data.message;
-                    versionMsg.className = 'mt-2 text-center small font-weight-bold text-danger';
-                }
-            })
-            .catch(err => {
-                btnSaveVersion.disabled = false;
-                versionMsg.textContent = 'Error de conexión';
-                versionMsg.className = 'mt-2 text-center small font-weight-bold text-danger';
-                console.error(err);
+        if(btnSyncDb) {
+            btnSyncDb.addEventListener('click', function() {
+                dbVersionInput.value = versionInput.value;
             });
-        });
+        }
+
+        // Guardar versión
+        if (btnUpdateVersion) {
+            btnUpdateVersion.addEventListener('click', function() {
+                const formData = new FormData(versionForm);
+                formData.append('action', 'update_version');
+
+                btnUpdateVersion.disabled = true;
+                if(versionMsg) {
+                    versionMsg.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Guardando...';
+                    versionMsg.className = 'mt-2 text-left small font-weight-bold text-info';
+                }
+
+                fetch('preparar.php', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    btnUpdateVersion.disabled = false;
+                    if (data.status === 'success') {
+                        if(versionMsg) {
+                            versionMsg.innerHTML = '<i class="fas fa-check"></i> Guardado';
+                            versionMsg.className = 'mt-2 text-left small font-weight-bold text-success';
+                        }
+                        
+                        // Actualizar vista previa
+                        const newVer = formData.get('version');
+                        if(displayVersionBadge) displayVersionBadge.textContent = newVer;
+                        if(displayFilename) displayFilename.textContent = `update_${newVer}.zip`;
+                        
+                        // Resetear mensaje después de 3 seg
+                        setTimeout(() => { if(versionMsg) versionMsg.innerHTML = ''; }, 3000);
+                    } else {
+                        if(versionMsg) {
+                            versionMsg.textContent = data.message;
+                            versionMsg.className = 'mt-2 text-left small font-weight-bold text-danger';
+                        }
+                    }
+                })
+                .catch(err => {
+                    btnUpdateVersion.disabled = false;
+                    if(versionMsg) {
+                        versionMsg.textContent = 'Error de conexión';
+                        versionMsg.className = 'mt-2 text-left small font-weight-bold text-danger';
+                    }
+                    console.error(err);
+                });
+            });
+        }
 
         function log(msg, type = 'info') {
             const time = new Date().toLocaleTimeString();
@@ -819,6 +976,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
             });
         });
 
+        // Exportar BD Local
+        const btnsExportDb = document.querySelectorAll('.btn-export-db-action');
+        btnsExportDb.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const version = document.getElementById('db-version-input').value;
+                if(!confirm('¿Desea exportar la estructura de la base de datos local y guardarla como actualización versión ' + version + '? Esto sobrescribirá los archivos SQL existentes en views/updates/.')) return;
+
+                const formData = new FormData();
+                formData.append('action', 'export_db');
+                formData.append('version', version);
+                
+                log('Iniciando exportación de BD...', 'info');
+
+                fetch('preparar.php', { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        log(data.message, 'info');
+                        alert('Base de datos exportada correctamente.');
+                    } else {
+                        log(data.message, 'error');
+                        alert('Error al exportar BD: ' + data.message);
+                    }
+                })
+                .catch(err => log('Error AJAX: ' + err, 'error'));
+            });
+        });
+
         // Lógica de Subida FTP con Modal
         
         // 1. Abrir modal de confirmación desde el modal de éxito
@@ -874,6 +1059,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
                     uploadResultMsg.innerHTML = data.message;
                     uploadResultMsg.className = 'text-success font-weight-bold';
                     log('SUBIDA FTP EXITOSA: ' + data.message, 'info');
+                    
+                    // Refrescar automáticamente la página después de 3 segundos
+                    setTimeout(() => {
+                        location.reload();
+                    }, 3000);
                 } else {
                     uploadResultIcon.innerHTML = '<i class="fas fa-times-circle text-danger"></i>';
                     uploadResultMsg.innerHTML = data.message;

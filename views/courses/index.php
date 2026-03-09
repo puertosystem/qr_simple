@@ -3,6 +3,12 @@
 <head>
   <?php include __DIR__ . '/../partials/head.php'; ?>
   <link rel="stylesheet" href="assets/lte/plugins/sweetalert2-theme-bootstrap-4/bootstrap-4.min.css">
+  <style>
+      /* Fix SweetAlert2 z-index issue with Bootstrap modals */
+      .swal2-container {
+          z-index: 2000 !important;
+      }
+  </style>
 </head>
 <body class="hold-transition sidebar-mini">
 <div class="wrapper">
@@ -81,8 +87,6 @@
                       <th>Código</th>
                       <th>Nombre</th>
                       <th>Modalidad</th>
-                      <th>Participantes</th>
-                      <th>QR</th>
                       <th>Inicio</th>
                       <th>Estado</th>
                       <th>Acciones</th>
@@ -91,27 +95,16 @@
                   <tbody>
                     <?php if (empty($coursesData['data'])): ?>
                       <tr>
-                        <td colspan="7" class="text-center">No se encontraron cursos.</td>
+                        <td colspan="6" class="text-center">No se encontraron cursos.</td>
                       </tr>
                     <?php else: ?>
                       <?php foreach ($coursesData['data'] as $row): ?>
                         <tr>
                           <td><?php echo htmlspecialchars($row['event_code']); ?></td>
-                          <td><?php echo htmlspecialchars($row['name']); ?></td>
+                          <td style="max-width: 250px; white-space: normal;"><?php echo htmlspecialchars($row['name']); ?></td>
                           <td>
                             <strong>Tipo:</strong> <?php echo htmlspecialchars($row['type_name']); ?><br>
                             <strong>Modalidad:</strong> <?php echo htmlspecialchars($row['modality_name']); ?>
-                          </td>
-                          <td>
-                            <strong><?php echo $row['total_participants'] ?? 0; ?> participantes</strong><br>
-                            <small class="text-muted">
-                                Activos: <?php echo $row['active_participants'] ?? 0; ?> · 
-                                Completados: <?php echo $row['completed_participants'] ?? 0; ?>
-                            </small>
-                          </td>
-                          <td>
-                            <span class="text-success"><i class="fas fa-check-circle"></i> Con QR: <strong><?php echo $row['with_qr'] ?? 0; ?></strong></span><br>
-                            <span class="text-danger"><i class="fas fa-times-circle"></i> Sin QR: <strong><?php echo $row['without_qr'] ?? 0; ?></strong></span>
                           </td>
                           <td><?php echo $row['start_date'] ? date('d/m/Y', strtotime($row['start_date'])) : '-'; ?></td>
                           <td>
@@ -125,6 +118,9 @@
                             ?>
                           </td>
                           <td>
+                            <a href="index.php?page=participants&course_id=<?php echo $row['id']; ?>" class="btn btn-sm btn-warning" title="Ver Matriculados">
+                                <i class="fas fa-users"></i> Matriculados
+                            </a>
                             <?php
                               $bgFile = $row['certificate_background_filename'];
                               $bgUrl = '';
@@ -448,10 +444,23 @@ $(document).ready(function() {
 
     // Eliminar fondo (visual)
     $('#btn_delete_background').on('click', function() {
-        $('#edit_background_preview_container').hide();
-        $('#delete_background').val('1');
-        $('#edit_certificate_background').val(''); // Clear file input
-        $('.custom-file-label').html('Elegir archivo');
+        Swal.fire({
+            title: '¿Estás seguro?',
+            text: "¿Deseas eliminar la imagen de fondo actual?",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                $('#edit_background_preview_container').hide();
+                $('#delete_background').val('1');
+                $('#edit_certificate_background').val(''); // Clear file input
+                $('.custom-file-label').html('Elegir archivo');
+            }
+        });
     });
 
     // Guardar cambios

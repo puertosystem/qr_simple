@@ -78,7 +78,8 @@ class ParticipantController
             } else {
                 $page = isset($_GET['p']) ? (int)$_GET['p'] : 1;
                 $search = isset($_GET['q']) ? trim($_GET['q']) : '';
-                $participantsData = $this->getParticipants($pdo, $page, 10, $search);
+                $courseId = isset($_GET['course_id']) ? (int)$_GET['course_id'] : null;
+                $participantsData = $this->getParticipants($pdo, $page, 10, $search, $courseId);
                 require __DIR__ . '/../views/participants/index.php';
             }
 
@@ -564,15 +565,25 @@ class ParticipantController
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    private function getParticipants(PDO $pdo, int $page = 1, int $limit = 10, string $search = ''): array
+    private function getParticipants(PDO $pdo, int $page = 1, int $limit = 10, string $search = '', ?int $courseId = null): array
     {
         $offset = ($page - 1) * $limit;
         $params = [];
-        $where = '';
+        $conditions = [];
 
         if ($search !== '') {
-            $where = 'WHERE p.first_name LIKE :search OR p.last_name LIKE :search OR p.identity_document LIKE :search OR p.email LIKE :search OR c.nombre LIKE :search';
+            $conditions[] = '(p.first_name LIKE :search OR p.last_name LIKE :search OR p.identity_document LIKE :search OR p.email LIKE :search OR c.nombre LIKE :search)';
             $params[':search'] = "%$search%";
+        }
+
+        if ($courseId) {
+            $conditions[] = 'c.id = :courseId';
+            $params[':courseId'] = $courseId;
+        }
+
+        $where = '';
+        if (!empty($conditions)) {
+            $where = 'WHERE ' . implode(' AND ', $conditions);
         }
 
         // Use 'usuarios', 'curso_estudiantes', 'cursos'

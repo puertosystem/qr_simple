@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Registro Exitoso</title>
+    <link rel="icon" type="image/png" href="images/logo/icono.png">
     <link rel="stylesheet" href="assets/lte/dist/css/adminlte.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
@@ -38,6 +39,7 @@
                     <p>Evento: <strong><?= htmlspecialchars($evento['nombre']) ?></strong></p>
                     <form method="post" action="index.php?page=constancias" target="_blank">
                         <input type="hidden" name="id" value="<?= $datos['id'] ?>">
+                        <input type="hidden" name="event_id" value="<?= $evento['id'] ?>">
                         <input type="hidden" name="action" value="download">
                         <button type="submit" class="btn btn-success btn-lg btn-block">
                             <i class="fas fa-download"></i> Descargar Constancia
@@ -53,6 +55,16 @@
 
             <div class="mt-4 text-center">
                 <a href="index.php?page=constancias&view=public">Volver al inicio</a>
+            </div>
+            
+            <div class="mt-4 text-center text-muted" style="font-size: 0.8rem; border-top: 1px solid #eee; padding-top: 15px;">
+                <p class="mb-1">
+                    Copyright &copy; <?php echo date('Y'); ?> 
+                    <a href="https://www.linkedin.com/company/puertosystem/" target="_blank">Puerto System, S.A.</a>
+                </p>
+                <p class="mb-0">
+                    Desarrollado por: <a href="https://www.linkedin.com/in/norberto-ramirez/" target="_blank">Norberto Ramirez</a> & <a href="https://postsdigital.com/" target="_blank">POSTS Digital</a> - v<?php echo APP_VERSION; ?>
+                </p>
             </div>
         </div>
     </div>

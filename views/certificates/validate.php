@@ -142,7 +142,7 @@
                 <a href="https://www.linkedin.com/company/puertosystem/" target="_blank" class="text-indigo-600 hover:underline font-medium">Puerto System, S.A.</a>
             </p>
             <p>
-                Desarrollado por: <a href="https://www.linkedin.com/in/norberto-ramirez/" target="_blank" class="text-gray-700 hover:text-indigo-600">Norberto Ramirez</a> & <a href="https://postsdigital.com/" target="_blank" class="text-gray-700 hover:text-indigo-600">POSTS Digital</a> - v1.0.8
+                Desarrollado por: <a href="https://www.linkedin.com/in/norberto-ramirez/" target="_blank" class="text-gray-700 hover:text-indigo-600">Norberto Ramirez</a> & <a href="https://postsdigital.com/" target="_blank" class="text-gray-700 hover:text-indigo-600">POSTS Digital</a> - v<?php echo APP_VERSION; ?>
             </p>
         </div>
     </div>

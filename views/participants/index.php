@@ -62,6 +62,9 @@
                 <div class="card-tools">
                   <form action="index.php" method="get">
                     <input type="hidden" name="page" value="participants">
+                    <?php if (isset($_GET['course_id'])): ?>
+                        <input type="hidden" name="course_id" value="<?php echo (int)$_GET['course_id']; ?>">
+                    <?php endif; ?>
                     <div class="input-group input-group-sm" style="width: 250px;">
                       <input type="text" name="q" class="form-control float-right" placeholder="Buscar..." value="<?php echo isset($_GET['q']) ? htmlspecialchars($_GET['q']) : ''; ?>">
                       <div class="input-group-append">
@@ -156,10 +159,11 @@
                   $totalPages = $participantsData['totalPages'];
                   $currentPage = $participantsData['page'];
                   $q = isset($_GET['q']) ? '&q=' . urlencode($_GET['q']) : '';
+                  $courseParam = isset($_GET['course_id']) ? '&course_id=' . (int)$_GET['course_id'] : '';
                 ?>
                 <ul class="pagination pagination-sm m-0 float-right">
                   <li class="page-item <?php echo $currentPage <= 1 ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="index.php?page=participants&p=<?php echo $currentPage - 1; ?><?php echo $q; ?>">&laquo;</a>
+                    <a class="page-link" href="index.php?page=participants&p=<?php echo $currentPage - 1; ?><?php echo $q . $courseParam; ?>">&laquo;</a>
                   </li>
                   
                   <?php
@@ -169,7 +173,7 @@
                     if ($i == 1 || $i == $totalPages || ($i >= $currentPage - $range && $i <= $currentPage + $range)):
                   ?>
                     <li class="page-item <?php echo $currentPage == $i ? 'active' : ''; ?>">
-                      <a class="page-link" href="index.php?page=participants&p=<?php echo $i; ?><?php echo $q; ?>"><?php echo $i; ?></a>
+                      <a class="page-link" href="index.php?page=participants&p=<?php echo $i; ?><?php echo $q . $courseParam; ?>"><?php echo $i; ?></a>
                     </li>
                   <?php 
                     // Mostrar puntos suspensivos si hay hueco
@@ -180,7 +184,7 @@
                   <?php endfor; ?>
 
                   <li class="page-item <?php echo $currentPage >= $totalPages ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="index.php?page=participants&p=<?php echo $currentPage + 1; ?><?php echo $q; ?>">&raquo;</a>
+                    <a class="page-link" href="index.php?page=participants&p=<?php echo $currentPage + 1; ?><?php echo $q . $courseParam; ?>">&raquo;</a>
                   </li>
                 </ul>
               </div>

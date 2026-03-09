@@ -41,10 +41,12 @@ class UpdateController {
     public function applyDbUpdate() {
         header('Content-Type: application/json');
         
-        $sqlFile = __DIR__ . '/../views/updates/update_server_db.sql';
-        
-        if (!file_exists($sqlFile)) {
-            echo json_encode(['status' => 'error', 'message' => 'No se encontró el archivo de actualización de base de datos (views/updates/update_server_db.sql).']);
+        // Buscar archivo de actualización
+        $sqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
+        $sqlFile = !empty($sqlFiles) ? end($sqlFiles) : '';
+
+        if (!$sqlFile || !file_exists($sqlFile)) {
+            echo json_encode(['status' => 'error', 'message' => 'No se encontró el archivo de actualización de base de datos (views/updates/update_server_db*.sql).']);
             exit;
         }
         
@@ -57,8 +59,20 @@ class UpdateController {
             // Ejecutar consultas
             $pdo->exec($sql);
             
+            // Guardar hash para evitar repetir la actualización si vuelve el mismo archivo
+            $this->saveDbUpdateHash(md5(trim($sql)));
+            
             // Eliminar el archivo después de actualizar para evitar que se ejecute de nuevo
             @unlink($sqlFile);
+
+            // Limpieza profunda: Eliminar cualquier otro archivo SQL de actualización antiguo
+            // para evitar acumulación y conflictos en el cliente
+            $allSqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
+            if ($allSqlFiles) {
+                foreach ($allSqlFiles as $f) {
+                    @unlink($f);
+                }
+            }
             
             echo json_encode(['status' => 'success', 'message' => 'Base de datos actualizada correctamente.']);
         } catch (Exception $e) {
@@ -73,10 +87,99 @@ class UpdateController {
         $currentVersion = APP_VERSION;
         
         // Verificar si existe una actualización de base de datos pendiente
-        $sqlFile = __DIR__ . '/../views/updates/update_server_db.sql';
-        $dbUpdateAvailable = file_exists($sqlFile);
+        // Buscar archivo con patrón update_server_db_X.X.X.sql o update_server_db.sql
+        $sqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
+        $sqlFile = !empty($sqlFiles) ? end($sqlFiles) : ''; // Tomar el último (asumiendo orden alfabético/versión)
+        
+        $dbUpdateAvailable = false;
+
+        if ($sqlFile && file_exists($sqlFile)) {
+            $sqlContent = trim(file_get_contents($sqlFile));
+            if (!empty($sqlContent)) {
+                // Validación 1: Verificar Hash
+                $currentHash = md5($sqlContent);
+                $lastHash = $this->getLastDbUpdateHash();
+                
+                // Validación 2: Verificar Versión Registrada en BD
+                $dbVersion = $this->getDbVersion();
+                
+                // Mostrar actualización SI:
+                // 1. El hash es diferente (contenido nuevo)
+                // Y
+                // 2. La versión de la App es MAYOR a la versión registrada en la BD
+                //    (Esto evita que al reinstalar la misma versión salga el aviso)
+                
+                // Corrección Lógica: Si el hash es igual, NO mostrar.
+                // Si el hash es diferente, PERO la versión DB ya es igual o mayor a la actual, tampoco mostrar (ya se actualizó por otro medio o es un falso positivo)
+
+                
+                if ($currentHash !== $lastHash) {
+                     // Solo si el hash es distinto, comprobamos versiones como seguridad adicional
+                     // Si la DB dice que ya tiene la versión 1.1.5 y la APP es 1.1.5, no debería pedir actualizar DB
+                     // salvo que queramos forzarlo.
+                     
+                     if (version_compare($dbVersion, APP_VERSION, '<')) {
+                         $dbUpdateAvailable = true;
+                     }
+                }
+            }
+        }
         
         require __DIR__ . '/../views/updates/index.php';
+    }
+
+    private function getDbVersion() {
+        try {
+            require_once __DIR__ . '/../config/database.php';
+            $pdo = Database::getConnection();
+            $stmt = $pdo->prepare("SELECT valor FROM configuracion WHERE clave = 'app_version'");
+            $stmt->execute();
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $result ? $result['valor'] : '0.0.0';
+        } catch (Exception $e) {
+            return '0.0.0';
+        }
+    }
+
+    private function getLastDbUpdateHash() {
+        try {
+            require_once __DIR__ . '/../config/database.php';
+            $pdo = Database::getConnection();
+            
+            // Verificar si existe la tabla configuracion
+            // Usamos una consulta silenciosa que fallará si la tabla no existe
+            $stmt = $pdo->prepare("SELECT valor FROM configuracion WHERE clave = 'last_db_update_hash'");
+            $stmt->execute();
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $result ? $result['valor'] : '';
+        } catch (Exception $e) {
+            // Si la tabla no existe o hay error, asumimos que no hay hash guardado
+            return '';
+        }
+    }
+
+    private function saveDbUpdateHash($hash) {
+        try {
+            require_once __DIR__ . '/../config/database.php';
+            $pdo = Database::getConnection();
+            
+            // Asegurar que la tabla existe
+            $pdo->exec("CREATE TABLE IF NOT EXISTS `configuracion` (
+              `clave` VARCHAR(50) PRIMARY KEY,
+              `valor` TEXT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+            // Guardar hash
+            $stmt = $pdo->prepare("REPLACE INTO configuracion (clave, valor) VALUES ('last_db_update_hash', ?)");
+            $stmt->execute([$hash]);
+
+            // Guardar versión de la App como versión de DB actualizada
+            $stmt2 = $pdo->prepare("REPLACE INTO configuracion (clave, valor) VALUES ('app_version', ?)");
+            $stmt2->execute([APP_VERSION]);
+            
+        } catch (Exception $e) {
+            error_log("Error guardando hash de actualización BD: " . $e->getMessage());
+        }
     }
 
     private function checkSystemRequirements() {

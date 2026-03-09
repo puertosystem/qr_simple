@@ -257,6 +257,7 @@ class CertificateController
         }
     }
 
+    // Descarga individual de PDF
     private function downloadIndividualPdf(): void
     {
         $certificateId = isset($_POST['certificate_id']) ? trim($_POST['certificate_id']) : '';

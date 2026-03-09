@@ -20,6 +20,11 @@ class ConstanciaController
         $action = $_GET['action'] ?? $_POST['action'] ?? null;
 
         // Public actions
+        if ($action === 'validate') {
+            $this->validate();
+            return;
+        }
+
         if ($action === 'register_lead' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $this->storeLead();
             return;
@@ -33,6 +38,16 @@ class ConstanciaController
         // Admin actions
         if ($action === 'store_event' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $this->storeEvent();
+            return;
+        }
+
+        if ($action === 'update_event' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            $this->updateEvent();
+            return;
+        }
+
+        if ($action === 'get_event_details' && isset($_GET['id'])) {
+            $this->getEventDetails();
             return;
         }
         
@@ -57,15 +72,36 @@ class ConstanciaController
 
     private function successView()
     {
-        if (!isset($_SESSION['registro_exitoso'])) {
+        // 1. Intentar obtener datos por GET (Prioridad para concurrencia)
+        $leadId = $_GET['id'] ?? null;
+        $eventoId = $_GET['event_id'] ?? null;
+        
+        $datos = null;
+        $evento = null;
+        
+        if ($leadId) {
+            $lead = $this->leadModel->findById($leadId);
+            if ($lead) {
+                $datos = $lead;
+                $datos['id'] = $leadId; // Asegurar ID
+            }
+        }
+        
+        // Fallback a sesión (comportamiento antiguo, solo si no hay GET)
+        if (!$datos && isset($_SESSION['registro_exitoso'])) {
+            $datos = $_SESSION['registro_exitoso'];
+            $eventoId = $datos['evento_id'] ?? null;
+        }
+        
+        // Si no hay datos ni en GET ni en Sesión, redirigir
+        if (!$datos) {
             header('Location: index.php?page=constancias&view=public');
             exit;
         }
-        $datos = $_SESSION['registro_exitoso'];
         
-        // Si tenemos el ID del evento en la sesión, lo usamos
-        if (isset($datos['evento_id'])) {
-            $evento = $this->eventoModel->findById($datos['evento_id']);
+        // Determinar evento
+        if ($eventoId) {
+            $evento = $this->eventoModel->findById($eventoId);
         } else {
             // Fallback al comportamiento anterior (último activo)
             $evento = $this->eventoModel->getLastActive();
@@ -84,12 +120,17 @@ class ConstanciaController
     {
         $page = isset($_GET['p']) ? (int)$_GET['p'] : 1;
         $search = isset($_GET['q']) ? trim($_GET['q']) : '';
+        $eventoId = isset($_GET['evento_id']) ? $_GET['evento_id'] : null;
+        
         $limit = 10;
         $offset = ($page - 1) * $limit;
         
-        $leads = $this->leadModel->getAll($limit, $offset, $search);
-        $total = $this->leadModel->countAll($search);
+        $leads = $this->leadModel->getAll($limit, $offset, $search, $eventoId);
+        $total = $this->leadModel->countAll($search, $eventoId);
         $totalPages = ceil($total / $limit);
+        
+        // Get all events for filter
+        $events = $this->eventoModel->getAll();
         
         require __DIR__ . '/../views/constancias/leads.php';
     }
@@ -100,12 +141,114 @@ class ConstanciaController
         $selectedEvent = null;
 
         if ($eventId) {
-            $selectedEvent = $this->eventoModel->findById($eventId);
+            $event = $this->eventoModel->findById($eventId);
+            // Solo permitir evento si está activo
+            if ($event && $event['activo'] == 1) {
+                $selectedEvent = $event;
+            }
         }
 
         // Get active events for the dropdown
-        $events = $this->eventoModel->getAll(); // TODO: Filter active only in model or here
+        $allEvents = $this->eventoModel->getAll();
+        $events = array_filter($allEvents, function($e) {
+            return $e['activo'] == 1;
+        });
+
         require __DIR__ . '/../views/constancias/public.php';
+    }
+
+    private function getEventDetails()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) {
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'ID no proporcionado']);
+            exit;
+        }
+
+        $event = $this->eventoModel->findById($id);
+        header('Content-Type: application/json');
+        
+        if ($event) {
+            echo json_encode($event);
+        } else {
+            http_response_code(404);
+            echo json_encode(['error' => 'Evento no encontrado']);
+        }
+        exit;
+    }
+
+    private function updateEvent()
+    {
+        $id = $_POST['id'] ?? null;
+        $nombre = $_POST['nombre'] ?? '';
+        $fecha_inicio = $_POST['fecha_inicio'] ?? '';
+        
+        if (!$id || empty($nombre) || empty($fecha_inicio)) {
+            $_SESSION['error'] = 'ID, nombre y fecha de inicio son obligatorios.';
+            header('Location: index.php?page=constancias');
+            exit;
+        }
+
+        $event = $this->eventoModel->findById($id);
+        if (!$event) {
+            $_SESSION['error'] = 'Evento no encontrado.';
+            header('Location: index.php?page=constancias');
+            exit;
+        }
+
+        $fondo_constancia = $event['fondo_constancia']; // Keep existing by default
+        $delete_fondo = $_POST['delete_fondo'] ?? '0';
+        $hasNewFile = (isset($_FILES['fondo_constancia']) && $_FILES['fondo_constancia']['error'] === UPLOAD_ERR_OK);
+
+        // Case 1: Explicit deletion (without replacement)
+        if ($delete_fondo === '1' && !$hasNewFile) {
+            if (!empty($event['fondo_constancia'])) {
+                $oldFilePath = __DIR__ . '/../' . $event['fondo_constancia'];
+                if (file_exists($oldFilePath)) {
+                    unlink($oldFilePath);
+                }
+            }
+            $fondo_constancia = null;
+        }
+
+        // Case 2: Replacement (New file uploaded)
+        if ($hasNewFile) {
+            $uploadDir = __DIR__ . '/../images/constancia/';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
+            
+            $extension = pathinfo($_FILES['fondo_constancia']['name'], PATHINFO_EXTENSION);
+            $filename = 'constancia_' . time() . '.' . $extension;
+            
+            if (move_uploaded_file($_FILES['fondo_constancia']['tmp_name'], $uploadDir . $filename)) {
+                // Upload successful, NOW delete old file if it exists
+                if (!empty($event['fondo_constancia'])) {
+                    $oldFilePath = __DIR__ . '/../' . $event['fondo_constancia'];
+                    if (file_exists($oldFilePath)) {
+                        unlink($oldFilePath);
+                    }
+                }
+                $fondo_constancia = 'images/constancia/' . $filename;
+            }
+        }
+
+        $data = [
+            'nombre' => $nombre,
+            'fecha_inicio' => $fecha_inicio,
+            'fecha_fin' => !empty($_POST['fecha_fin']) ? $_POST['fecha_fin'] : null,
+            'fondo_constancia' => $fondo_constancia,
+            'activo' => $event['activo'] // Preserve existing status
+        ];
+
+        if ($this->eventoModel->update($id, $data)) {
+            $_SESSION['success'] = 'Evento actualizado exitosamente.';
+        } else {
+            $_SESSION['error'] = 'Error al actualizar el evento.';
+        }
+        header('Location: index.php?page=constancias');
+        exit;
     }
 
     private function storeEvent()
@@ -121,16 +264,17 @@ class ConstanciaController
 
         $fondo_constancia = null;
         if (isset($_FILES['fondo_constancia']) && $_FILES['fondo_constancia']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = __DIR__ . '/../assets/fondos/';
+            // Changed to images/constancia as requested by user
+            $uploadDir = __DIR__ . '/../images/constancia/';
             if (!is_dir($uploadDir)) {
                 mkdir($uploadDir, 0755, true);
             }
             
             $extension = pathinfo($_FILES['fondo_constancia']['name'], PATHINFO_EXTENSION);
-            $filename = 'fondo_' . time() . '.' . $extension;
+            $filename = 'constancia_' . time() . '.' . $extension;
             
             if (move_uploaded_file($_FILES['fondo_constancia']['tmp_name'], $uploadDir . $filename)) {
-                $fondo_constancia = 'assets/fondos/' . $filename;
+                $fondo_constancia = 'images/constancia/' . $filename;
             }
         }
 
@@ -181,46 +325,58 @@ class ConstanciaController
 
                 // Generar Constancia si hay evento seleccionado
                 if ($eventoId) {
-                    $codigo = $this->eventoModel->generateUniqueCode();
+                    // Validar que el evento existe y está activo antes de generar constancia
+                    $eventoCheck = $this->eventoModel->findById($eventoId);
                     
-                    // Obtener el esquema (http o https)
-                    $scheme = isset($_SERVER['REQUEST_SCHEME']) ? $_SERVER['REQUEST_SCHEME'] : 
-                              (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http');
-                    
-                    // Obtener el host
-                    $host = $_SERVER['HTTP_HOST'];
-                    
-                    // Obtener el directorio base de la aplicación (elimina el script actual)
-                    $baseDir = dirname($_SERVER['PHP_SELF']);
-                    
-                    // Limpiar barras invertidas en Windows y asegurar que termina en /
-                    $baseDir = str_replace('\\', '/', $baseDir);
-                    if (substr($baseDir, -1) !== '/') {
-                        $baseDir .= '/';
+                    if ($eventoCheck && $eventoCheck['activo'] == 1) {
+                        $codigo = $this->eventoModel->generateUniqueCode();
+                        
+                        // Obtener el esquema (http o https)
+                        $scheme = isset($_SERVER['REQUEST_SCHEME']) ? $_SERVER['REQUEST_SCHEME'] : 
+                                  (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http');
+                        
+                        // Obtener el host
+                        $host = $_SERVER['HTTP_HOST'];
+                        
+                        // Obtener el directorio base de la aplicación (elimina el script actual)
+                        $baseDir = dirname($_SERVER['PHP_SELF']);
+                        
+                        // Limpiar barras invertidas en Windows y asegurar que termina en /
+                        $baseDir = str_replace('\\', '/', $baseDir);
+                        if (substr($baseDir, -1) !== '/') {
+                            $baseDir .= '/';
+                        }
+                        
+                        // Construir la URL completa
+                        $baseUrl = $scheme . '://' . $host . $baseDir;
+                        $validationUrl = $baseUrl . "index.php?page=constancias&action=validate&code=" . $codigo;
+                        
+                        $constanciaData = [
+                            'lead_id' => $insertId,
+                            'evento_id' => $eventoId,
+                            'codigo_verificacion' => $codigo,
+                            'qr_codigo' => $validationUrl, // Guardamos la URL que debe contener el QR
+                            'ip_generacion' => $_SERVER['REMOTE_ADDR'] ?? null,
+                            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null
+                        ];
+                        
+                        $this->eventoModel->createConstancia($constanciaData);
+                        
+                        // Agregar info a la sesión para successView
+                        $data['evento_id'] = $eventoId;
+                        $data['codigo_constancia'] = $codigo;
                     }
-                    
-                    // Construir la URL completa
-                    $baseUrl = $scheme . '://' . $host . $baseDir;
-                    $validationUrl = $baseUrl . "index.php?page=constancias&action=validate&code=" . $codigo;
-                    
-                    $constanciaData = [
-                        'lead_id' => $insertId,
-                        'evento_id' => $eventoId,
-                        'codigo_verificacion' => $codigo,
-                        'qr_codigo' => $validationUrl, // Guardamos la URL que debe contener el QR
-                        'ip_generacion' => $_SERVER['REMOTE_ADDR'] ?? null,
-                        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null
-                    ];
-                    
-                    $this->eventoModel->createConstancia($constanciaData);
-                    
-                    // Agregar info a la sesión para successView
-                    $data['evento_id'] = $eventoId;
-                    $data['codigo_constancia'] = $codigo;
                 }
 
-                $_SESSION['registro_exitoso'] = $data;
-                header('Location: index.php?page=constancias&view=success');
+                // $_SESSION['registro_exitoso'] = $data; // Deprecated due to concurrency issues
+                
+                // Redirigir con parámetros en URL para evitar conflictos de sesión entre pestañas
+                $redirectUrl = 'index.php?page=constancias&view=success&id=' . $insertId;
+                if ($eventoId) {
+                    $redirectUrl .= '&event_id=' . $eventoId;
+                }
+                
+                header('Location: ' . $redirectUrl);
                 exit;
             } else {
                 $_SESSION['public_error'] = 'Error al registrar. Inténtalo de nuevo.';
@@ -264,7 +420,32 @@ class ConstanciaController
             die('Registro no encontrado (ID: ' . htmlspecialchars($id) . ').');
         }
 
-        $evento = $this->eventoModel->getLastActive();
+        // Determinar Evento y Constancia
+        $eventoId = $_GET['event_id'] ?? $_POST['event_id'] ?? null;
+        $constancia = null;
+        $evento = null;
+
+        if ($eventoId) {
+            // Prioridad 1: Buscar el evento solicitado explícitamente
+            $evento = $this->eventoModel->findById($eventoId);
+            
+            if ($evento) {
+                // Si existe el evento, buscar si ya tiene constancia
+                $constancia = $this->eventoModel->getConstancia($lead['id'], $eventoId);
+            }
+        } else {
+            // Intentar buscar la última constancia generada para este lead
+            $constancia = $this->eventoModel->getLatestConstancia($lead['id']);
+            if ($constancia) {
+                $evento = $this->eventoModel->findById($constancia['evento_id']);
+            }
+        }
+
+        // Si no hay constancia previa, usar el último evento activo (fallback)
+        if (!$evento) {
+            $evento = $this->eventoModel->getLastActive();
+        }
+
         if (!$evento) {
             error_log('Error Constancia: No hay evento activo.');
             die('No hay evento activo para generar la constancia.');
@@ -278,22 +459,37 @@ class ConstanciaController
             require_once __DIR__ . '/../lib/tcpdf/tcpdf.php';
 
             // Verificar o crear registro de constancia
-            $constancia = $this->eventoModel->getConstancia($lead['id'], $evento['id']);
+            if (!$constancia) {
+                $constancia = $this->eventoModel->getConstancia($lead['id'], $evento['id']);
+            }
             
             if (!$constancia) {
                 try {
                     $codigo_verificacion = $this->eventoModel->generateUniqueCode();
                     
+                    // URL de validación
+                    $scheme = isset($_SERVER['REQUEST_SCHEME']) ? $_SERVER['REQUEST_SCHEME'] : 
+                              (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http');
+                    $host = $_SERVER['HTTP_HOST'];
+                    $baseDir = dirname($_SERVER['PHP_SELF']);
+                    $baseDir = str_replace('\\', '/', $baseDir);
+                    if (substr($baseDir, -1) !== '/') $baseDir .= '/';
+                    $baseUrl = $scheme . '://' . $host . $baseDir;
+                    $validationUrl = $baseUrl . "index.php?page=constancias&action=validate&code=" . $codigo_verificacion;
+
                     $constanciaData = [
                         'lead_id' => $lead['id'],
                         'evento_id' => $evento['id'],
                         'codigo_verificacion' => $codigo_verificacion,
-                        'qr_codigo' => $codigo_verificacion,
+                        'qr_codigo' => $validationUrl,
                         'ip_generacion' => $_SERVER['REMOTE_ADDR'] ?? null,
                         'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? null
                     ];
                     
-                    $this->eventoModel->createConstancia($constanciaData);
+                    $insertId = $this->eventoModel->createConstancia($constanciaData);
+                    $constancia = $constanciaData; // Datos para uso inmediato
+                    $constancia['id'] = $insertId;
+                    
                     error_log('Constancia creada: ' . $codigo_verificacion);
                 } catch (Exception $e) {
                     error_log('Error creando registro de constancia: ' . $e->getMessage());
@@ -301,7 +497,9 @@ class ConstanciaController
                 }
             } else {
                 $codigo_verificacion = $constancia['codigo_verificacion'];
-                error_log('Constancia existente recuperada: ' . $codigo_verificacion);
+                // Incrementar contador de descargas
+                $this->eventoModel->incrementDownload($constancia['id']);
+                error_log('Constancia existente recuperada y contador actualizado: ' . $codigo_verificacion);
             }
 
             // Configuración del PDF (Landscape, A4)
@@ -353,10 +551,6 @@ class ConstanciaController
             
             $pdf->Cell(0, 10, $fullName, 0, 1, 'C'); // Cell 0 width para centrar en toda la pagina
 
-            // Fecha de emisión
-            $pdf->SetXY(20, 120);
-            $pdf->SetFont('helvetica', '', 20);
-            $pdf->Cell(74, 5, date('d/m/Y'), 0, 1, 'R');
 
             // Generar código QR
             $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
@@ -377,7 +571,7 @@ class ConstanciaController
                 // Posición del QR (ajustar según necesidad, ejemplo basado en certificados)
                 // En generar_constancia.php original estaba comentado, pero aquí lo ponemos
                 // Usamos una posición estándar, por ejemplo esquina inferior derecha
-                $pdf->Image($qrTemp, 250, 160, 30, 30);
+                $pdf->Image($qrTemp, 20, 160, 30, 30);
                 @unlink($qrTemp);
             }
 
@@ -390,5 +584,33 @@ class ConstanciaController
             error_log('Error generando constancia: ' . $e->getMessage());
             die('Error al generar la constancia.');
         }
+    }
+
+    private function validate()
+    {
+        $code = $_GET['code'] ?? '';
+        $constancia = null;
+        
+        if ($code) {
+            $constancia = $this->eventoModel->getConstanciaByCode($code);
+        }
+
+        // Base URL calculation
+        $scheme = isset($_SERVER['REQUEST_SCHEME']) ? $_SERVER['REQUEST_SCHEME'] : 
+                  (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http');
+        $host = $_SERVER['HTTP_HOST'];
+        $baseDir = dirname($_SERVER['PHP_SELF']);
+        $baseDir = str_replace('\\', '/', $baseDir);
+        if (substr($baseDir, -1) !== '/') {
+            $baseDir .= '/';
+        }
+        $baseUrl = $scheme . '://' . $host . $baseDir;
+
+        if ($constancia) {
+            require __DIR__ . '/../views/constancias/validate.php';
+        } else {
+            require __DIR__ . '/../views/constancias/validate_error.php';
+        }
+        exit;
     }
 }

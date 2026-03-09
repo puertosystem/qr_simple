@@ -29,6 +29,14 @@ if ($page === 'login') {
     $controller = new CertificateController();
     $controller->download();
     exit;
+} elseif ($page === 'constancias' && (
+    ((isset($_GET['action']) || isset($_POST['action'])) && in_array($_GET['action'] ?? $_POST['action'], ['validate', 'download', 'register_lead'])) ||
+    (isset($_GET['view']) && in_array($_GET['view'], ['public', 'success']))
+)) {
+    require __DIR__ . '/controllers/ConstanciaController.php';
+    $controller = new ConstanciaController();
+    $controller->handleRequest();
+    exit;
 }
 
 // Protected routes - Check authentication

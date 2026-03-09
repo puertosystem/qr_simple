@@ -151,6 +151,10 @@ class CourseController
             // Handle File Upload
             $backgroundFileName = $this->handleFileUpload();
 
+            // Fetch current course to handle file deletion
+            $currentCourse = Course::find($pdo, $id);
+            $oldFilename = $currentCourse['certificate_background_filename'] ?? null;
+
             $data = [
                 'name' => $name,
                 'start_date' => !empty($_POST['start_date']) ? $_POST['start_date'] : null,
@@ -163,10 +167,31 @@ class CourseController
                 'description' => !empty($_POST['description']) ? $_POST['description'] : null
             ];
 
+            // Logic for file deletion/replacement
+            $deleteRequested = isset($_POST['delete_background']) && $_POST['delete_background'] == '1';
+            
             if ($backgroundFileName) {
+                // Case 1: Replacement (New file uploaded)
                 $data['certificate_background_filename'] = $backgroundFileName;
-            } elseif (isset($_POST['delete_background']) && $_POST['delete_background'] == '1') {
+                
+                // Delete old file if exists
+                if ($oldFilename) {
+                    $oldFilePath = __DIR__ . '/../images/plantilla/' . $oldFilename;
+                    if (file_exists($oldFilePath)) {
+                        unlink($oldFilePath);
+                    }
+                }
+            } elseif ($deleteRequested) {
+                // Case 2: Explicit deletion (without replacement)
                 $data['certificate_background_filename'] = null;
+                
+                // Delete old file if exists
+                if ($oldFilename) {
+                    $oldFilePath = __DIR__ . '/../images/plantilla/' . $oldFilename;
+                    if (file_exists($oldFilePath)) {
+                        unlink($oldFilePath);
+                    }
+                }
             }
 
             $auspiceIds = $_POST['auspices'] ?? [];

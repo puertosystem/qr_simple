@@ -11,18 +11,37 @@ try {
     $pdo = Database::getConnection();
     echo "<p style='color:green'>Conexión a base de datos exitosa.</p>";
     
-    $sqlFile = __DIR__ . '/update_server_db.sql';
+    // Buscar archivo SQL (update_server_db*.sql)
+    $sqlFiles = glob(__DIR__ . '/update_server_db*.sql');
+    $sqlFile = !empty($sqlFiles) ? end($sqlFiles) : '';
     
-    if (!file_exists($sqlFile)) {
-        die("<p style='color:red'>Error: No se encuentra el archivo update_server_db.sql</p>");
+    if (!$sqlFile || !file_exists($sqlFile)) {
+        die("<p style='color:red'>Error: No se encuentra ningún archivo update_server_db*.sql</p>");
     }
+    
+    echo "<p>Archivo encontrado: " . basename($sqlFile) . "</p>";
     
     $sql = file_get_contents($sqlFile);
     
     // Ejecutar consultas
+    // Dividir por punto y coma para ejecutar múltiples sentencias si es necesario
+    // (PDO::exec a veces tiene problemas con múltiples sentencias en una sola llamada dependiendo del driver)
     $pdo->exec($sql);
     
     echo "<p style='color:green'><strong>¡Base de datos actualizada correctamente!</strong></p>";
+    
+    // Limpiar archivos SQL procesados
+    $deletedCount = 0;
+    foreach ($sqlFiles as $file) {
+        if (@unlink($file)) {
+            $deletedCount++;
+        }
+    }
+    
+    if ($deletedCount > 0) {
+        echo "<p style='color:blue'>Se han eliminado $deletedCount archivo(s) SQL de actualización por seguridad.</p>";
+    }
+
     echo "<ul>";
     echo "<li>Se verificaron/crearon las tablas: constancia_eventos, constancia_leads, configuracion, constancias</li>";
     echo "<li>Se insertaron configuraciones por defecto.</li>";
