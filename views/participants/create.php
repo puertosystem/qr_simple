@@ -200,14 +200,14 @@
                       <label>Archivo de participantes</label>
                       <div class="border border-secondary rounded p-3 bg-light">
                         <p class="small mb-2">
-                          Formato sugerido: CSV o Excel con columnas (los campos opcionales pueden estar vacíos):
+                          Formato sugerido: CSV o Excel con columnas (todo es opcional: si viene en el archivo, se guarda):
                         </p>
                         <ul class="small mb-3">
-                          <li><span class="font-weight-bold">first_name</span> (nombres) - <em>Opcional si existe email/dni</em></li>
-                          <li><span class="font-weight-bold">last_name</span> (apellidos) - <em>Opcional si existe email/dni</em></li>
-                          <li><span class="font-weight-bold">email</span> (correo) - <em>Obligatorio si es nuevo</em></li>
-                          <li><span class="font-weight-bold">identity_document</span> (dni) - <em>Obligatorio si es nuevo</em></li>
-                          <li><span class="font-weight-bold">phone</span> (teléfono) - <em>Opcional</em></li>
+                          <li><span class="font-weight-bold">first_name</span> (nombres)</li>
+                          <li><span class="font-weight-bold">last_name</span> (apellidos)</li>
+                          <li><span class="font-weight-bold">email</span> (correo) - <em>Si está vacío y el participante no existe, se omite la fila</em></li>
+                          <li><span class="font-weight-bold">identity_document</span> (dni)</li>
+                          <li><span class="font-weight-bold">phone</span> (teléfono)</li>
                         </ul>
                         <div class="custom-file">
                           <input

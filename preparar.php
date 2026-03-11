@@ -6,10 +6,10 @@
 
 // Configuración de exclusiones
 $excludeItems = [
-    '.git', '.gitignore', '.idea', '.vscode', 'server_config', 'temp_updates',
+    '.git', '.gitignore', '.gitattributes', '.idea', '.vscode', 'server_config', 'temp_updates',
     'create_update.ps1', 'preparar.php', 'config/config.php', 'config/database.php',
     'README.md', 'LICENSE', 'template', 'composer.json', 'composer.lock',
-    'ftp_config.json', 'database', 'images' // Excluir config FTP, carpeta database y carpeta images del ZIP
+    'ftp_config.json', 'database', 'images', 'aulavirtual.sql' // Excluir config FTP, carpeta database, carpeta images y dump de BD del ZIP
 ];
 
 $foldersToEmpty = []; // Ya no vaciamos, simplemente excluimos toda la carpeta images

@@ -13,13 +13,389 @@ class ParticipantController
         $this->participantModel = new Participant();
     }
 
+    private function tableExists(PDO $pdo, string $tableName): bool
+    {
+        try {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
+            $stmt->execute([$tableName]);
+            return (int)$stmt->fetchColumn() > 0;
+        } catch (PDOException $e) {
+            error_log('tableExists falló: ' . $e->getMessage());
+            try {
+                $stmt = $pdo->query('SELECT 1 FROM `' . str_replace('`', '``', $tableName) . '` LIMIT 1');
+                $stmt->fetchColumn();
+                return true;
+            } catch (PDOException $probeError) {
+                return false;
+            }
+        }
+    }
+
+    private function columnExists(PDO $pdo, string $tableName, string $columnName): bool
+    {
+        try {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+            $stmt->execute([$tableName, $columnName]);
+            return (int)$stmt->fetchColumn() > 0;
+        } catch (PDOException $e) {
+            error_log('columnExists falló: ' . $e->getMessage());
+            try {
+                $safeTable = str_replace('`', '``', $tableName);
+                $safeColumn = str_replace('`', '``', $columnName);
+                $stmt = $pdo->query('SELECT `' . $safeColumn . '` FROM `' . $safeTable . '` LIMIT 0');
+                $stmt->fetchAll();
+                return true;
+            } catch (PDOException $probeError) {
+                return false;
+            }
+        }
+    }
+
+    private function firstExistingColumn(PDO $pdo, string $tableName, array $candidates): ?string
+    {
+        foreach ($candidates as $col) {
+            if ($this->columnExists($pdo, $tableName, $col)) {
+                return $col;
+            }
+        }
+        return null;
+    }
+
+    private function searchParticipantsUsersOnly(PDO $pdo, int $page, int $limit, string $search, bool $debug = false): array
+    {
+        $offset = ($page - 1) * $limit;
+        if (!$this->tableExists($pdo, 'usuarios')) {
+            return [
+                'data' => [],
+                'total' => 0,
+                'page' => $page,
+                'limit' => $limit,
+                'totalPages' => 0
+            ];
+        }
+
+        $hasUserFullName = $this->columnExists($pdo, 'usuarios', 'nombres_apellidos');
+        $firstNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['first_name', 'nombres']);
+        $lastNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['last_name', 'apellidos']);
+        $identityCol = $this->firstExistingColumn($pdo, 'usuarios', ['identity_document', 'documento_identidad']);
+        $phoneCol = $this->firstExistingColumn($pdo, 'usuarios', ['phone', 'movil', 'celular']);
+        $countryCol = $this->firstExistingColumn($pdo, 'usuarios', ['country', 'pais']);
+        $notesCol = $this->firstExistingColumn($pdo, 'usuarios', ['notes', 'observaciones']);
+        $emailCol = $this->firstExistingColumn($pdo, 'usuarios', ['email', 'correo']);
+        $orderCol = $this->firstExistingColumn($pdo, 'usuarios', ['updated_at', 'created_at', 'id']);
+
+        $params = [];
+        $conditions = [];
+
+        $search = preg_replace('/\s+/', ' ', trim($search));
+        $terms = [];
+        if ($search !== '') {
+            $rawTerms = preg_split('/\s+/', $search) ?: [];
+            foreach ($rawTerms as $t) {
+                $t = trim((string)$t);
+                if ($t !== '') {
+                    $terms[] = $t;
+                }
+            }
+
+            if (count($terms) <= 1) {
+                $searchValue = '%' . strtolower($search) . '%';
+                $parts = [];
+                $searchIndex = 0;
+                if ($hasUserFullName) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $ph;
+                }
+                if ($firstNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $firstNameCol . ') LIKE ' . $ph;
+                }
+                if ($lastNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $lastNameCol . ') LIKE ' . $ph;
+                }
+                if ($firstNameCol !== null || $lastNameCol !== null) {
+                    $concatCols = [];
+                    if ($firstNameCol !== null) $concatCols[] = 'p.' . $firstNameCol;
+                    if ($lastNameCol !== null) $concatCols[] = 'p.' . $lastNameCol;
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $ph;
+                }
+                if ($identityCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $ph;
+                }
+                if ($phoneCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $ph;
+                }
+                if ($countryCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $ph;
+                }
+                if ($notesCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $ph;
+                }
+                if ($emailCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $parts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $ph;
+                }
+                if (!empty($parts)) {
+                    $conditions[] = '(' . implode(' OR ', $parts) . ')';
+                }
+            } else {
+                $termIndex = 0;
+                foreach ($terms as $term) {
+                    $param = ':t' . $termIndex;
+                    $termIndex++;
+                    $parts = [];
+                    if ($hasUserFullName) {
+                        $parts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                    }
+                    if ($firstNameCol !== null) {
+                        $parts[] = 'LOWER(p.' . $firstNameCol . ') LIKE ' . $param;
+                    }
+                    if ($lastNameCol !== null) {
+                        $parts[] = 'LOWER(p.' . $lastNameCol . ') LIKE ' . $param;
+                    }
+                    if ($firstNameCol !== null || $lastNameCol !== null) {
+                        $concatCols = [];
+                        if ($firstNameCol !== null) $concatCols[] = 'p.' . $firstNameCol;
+                        if ($lastNameCol !== null) $concatCols[] = 'p.' . $lastNameCol;
+                        $parts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                    }
+                    if ($identityCol !== null) {
+                        $parts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                    }
+                    if ($phoneCol !== null) {
+                        $parts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                    }
+                    if ($countryCol !== null) {
+                        $parts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                    }
+                    if ($notesCol !== null) {
+                        $parts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                    }
+                    if ($emailCol !== null) {
+                        $parts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                    }
+                    if (!empty($parts)) {
+                        $params[$param] = '%' . strtolower($term) . '%';
+                        $conditions[] = '(' . implode(' OR ', $parts) . ')';
+                    }
+                }
+            }
+        }
+
+        $where = '';
+        if (!empty($conditions)) {
+            $where = 'WHERE ' . implode(' AND ', $conditions);
+        }
+
+        $firstNameExpr = "''";
+        $lastNameExpr = "''";
+        if ($firstNameCol !== null) {
+            $firstNameExpr = 'p.' . $firstNameCol;
+        }
+        if ($lastNameCol !== null) {
+            $lastNameExpr = 'p.' . $lastNameCol;
+        }
+        if ($hasUserFullName) {
+            if ($firstNameCol !== null) {
+                $firstNameExpr = "COALESCE(NULLIF(p." . $firstNameCol . ", ''), SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1))";
+                if ($lastNameCol !== null) {
+                    $lastNameExpr = "COALESCE(NULLIF(p." . $lastNameCol . ", ''), TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2)))";
+                } else {
+                    $lastNameExpr = "TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2))";
+                }
+            } else {
+                $firstNameExpr = "SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)";
+                $lastNameExpr = "TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2))";
+            }
+        }
+
+        $identityExpr = $identityCol !== null ? 'p.' . $identityCol : "''";
+        $emailExpr = $emailCol !== null ? 'p.' . $emailCol : "''";
+        $orderBy = $orderCol ? 'p.' . $orderCol . ' DESC' : 'p.id DESC';
+
+        $countSql = "SELECT COUNT(*) FROM usuarios p $where";
+        $stmt = $pdo->prepare($countSql);
+        foreach ($params as $key => $val) {
+            $stmt->bindValue($key, $val);
+        }
+        $stmt->execute();
+        $total = (int)$stmt->fetchColumn();
+
+        $sql = "SELECT
+                    p.id,
+                    $firstNameExpr as first_name,
+                    $lastNameExpr as last_name,
+                    $emailExpr as email,
+                    $identityExpr as identity_document,
+                    '' as course_name,
+                    '' as event_code,
+                    '' as enrollment_status,
+                    NULL as enrollment_date,
+                    NULL as enrollment_id,
+                    NULL as event_id
+                FROM usuarios p
+                $where
+                ORDER BY $orderBy
+                LIMIT :limit OFFSET :offset";
+
+        $stmt = $pdo->prepare($sql);
+        foreach ($params as $key => $val) {
+            $stmt->bindValue($key, $val);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if ($search !== '' && empty($data) && count($terms) > 1) {
+            $params = [];
+            $orGroups = [];
+            $termIndex = 0;
+            foreach ($terms as $term) {
+                $param = ':t' . $termIndex;
+                $termIndex++;
+
+                $parts = [];
+                if ($hasUserFullName) {
+                    $parts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                }
+                if ($firstNameCol !== null) {
+                    $parts[] = 'LOWER(p.' . $firstNameCol . ') LIKE ' . $param;
+                }
+                if ($lastNameCol !== null) {
+                    $parts[] = 'LOWER(p.' . $lastNameCol . ') LIKE ' . $param;
+                }
+                if ($firstNameCol !== null || $lastNameCol !== null) {
+                    $concatCols = [];
+                    if ($firstNameCol !== null) $concatCols[] = 'p.' . $firstNameCol;
+                    if ($lastNameCol !== null) $concatCols[] = 'p.' . $lastNameCol;
+                    $parts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                }
+                if ($identityCol !== null) {
+                    $parts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                }
+                if ($phoneCol !== null) {
+                    $parts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                }
+                if ($countryCol !== null) {
+                    $parts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                }
+                if ($notesCol !== null) {
+                    $parts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                }
+                if ($emailCol !== null) {
+                    $parts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                }
+                if (!empty($parts)) {
+                    $params[$param] = '%' . strtolower($term) . '%';
+                    $orGroups[] = '(' . implode(' OR ', $parts) . ')';
+                }
+            }
+
+            $where = '';
+            if (!empty($orGroups)) {
+                $where = 'WHERE ' . implode(' OR ', $orGroups);
+            }
+
+            $countSql = "SELECT COUNT(*) FROM usuarios p $where";
+            $stmt = $pdo->prepare($countSql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->execute();
+            $total = (int)$stmt->fetchColumn();
+
+            $sql = "SELECT
+                        p.id,
+                        $firstNameExpr as first_name,
+                        $lastNameExpr as last_name,
+                        $emailExpr as email,
+                        $identityExpr as identity_document,
+                        '' as course_name,
+                        '' as event_code,
+                        '' as enrollment_status,
+                        NULL as enrollment_date,
+                        NULL as enrollment_id,
+                        NULL as event_id
+                    FROM usuarios p
+                    $where
+                    ORDER BY $orderBy
+                    LIMIT :limit OFFSET :offset";
+
+            $stmt = $pdo->prepare($sql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        $result = [
+            'data' => $data,
+            'total' => $total,
+            'page' => $page,
+            'limit' => $limit,
+            'totalPages' => ($limit > 0) ? ceil($total / $limit) : 0
+        ];
+        if ($debug) {
+            $dbName = null;
+            try {
+                $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+            } catch (Throwable $e) {
+            }
+            $result['debug'] = [
+                'strategy' => 'users_only',
+                'db' => $dbName,
+                'search' => $search,
+                'columns' => [
+                    'nombres_apellidos' => $hasUserFullName,
+                        'first_name' => $firstNameCol,
+                        'last_name' => $lastNameCol,
+                        'identity_document' => $identityCol,
+                        'phone' => $phoneCol,
+                        'country' => $countryCol,
+                        'notes' => $notesCol,
+                        'email' => $emailCol
+                ],
+                'returned' => count($data),
+                'total' => (int)$total
+            ];
+        }
+        return $result;
+    }
+
     public function handleRequest(): void
     {
         $successMessage = null;
         $errorMessage = null;
         $events = [];
         $participantsData = [];
-        
         $view = isset($_GET['view']) ? $_GET['view'] : 'list';
 
         if (isset($_GET['action'])) {
@@ -79,12 +455,31 @@ class ParticipantController
                 $page = isset($_GET['p']) ? (int)$_GET['p'] : 1;
                 $search = isset($_GET['q']) ? trim($_GET['q']) : '';
                 $courseId = isset($_GET['course_id']) ? (int)$_GET['course_id'] : null;
-                $participantsData = $this->getParticipants($pdo, $page, 10, $search, $courseId);
+                if ($search !== '') {
+                    $participantsData = $this->searchParticipantsUsersOnly($pdo, $page, 10, $search);
+                } else {
+                    $participantsData = $this->getParticipants($pdo, $page, 10, $search, $courseId);
+                }
                 require __DIR__ . '/../views/participants/index.php';
             }
 
         } catch (Throwable $e) {
             error_log('Error cargando datos de participantes: ' . $e->getMessage());
+
+            $errorMessage = 'Ocurrió un error al cargar participantes.';
+            $participantsData = [
+                'data' => [],
+                'total' => 0,
+                'page' => 1,
+                'limit' => 10,
+                'totalPages' => 0
+            ];
+
+            if ($view === 'create') {
+                require __DIR__ . '/../views/participants/create.php';
+            } else {
+                require __DIR__ . '/../views/participants/index.php';
+            }
         }
     }
 
@@ -449,12 +844,9 @@ class ParticipantController
             }
         }
 
-        $requiredColumns = ['email', 'identity_document'];
-        foreach ($requiredColumns as $column) {
-            if (!isset($headerMap[$column])) {
-                fclose($handle);
-                return [null, 'El archivo debe contener al menos las columnas: email, identity_document.'];
-            }
+        if (!isset($headerMap['email']) && !isset($headerMap['identity_document'])) {
+            fclose($handle);
+            return [null, 'El archivo debe contener al menos la columna: email o identity_document.'];
         }
 
         $rows = [];
@@ -476,13 +868,12 @@ class ParticipantController
         foreach ($rows as $index => $data) {
             $firstName = isset($headerMap['first_name']) ? trim($data[$headerMap['first_name']] ?? '') : '';
             $lastName = isset($headerMap['last_name']) ? trim($data[$headerMap['last_name']] ?? '') : '';
-            $email = trim($data[$headerMap['email']] ?? '');
-            $identityDocument = trim($data[$headerMap['identity_document']] ?? '');
+            $email = isset($headerMap['email']) ? trim($data[$headerMap['email']] ?? '') : '';
+            $identityDocument = isset($headerMap['identity_document']) ? trim($data[$headerMap['identity_document']] ?? '') : '';
             $phone = isset($headerMap['phone']) ? trim($data[$headerMap['phone']] ?? '') : '';
             $notes = isset($headerMap['notes']) ? trim($data[$headerMap['notes']] ?? '') : '';
 
-            // Si faltan identificadores clave, saltar
-            if ($email === '' && $identityDocument === '') {
+            if ($firstName === '' && $lastName === '' && $email === '' && $identityDocument === '' && $phone === '' && $notes === '') {
                 $skippedInvalidRow++;
                 continue;
             }
@@ -504,15 +895,49 @@ class ParticipantController
                 if ($existingParticipant) {
                     // Existe: usar su ID
                     $participantId = (int)$existingParticipant['id'];
-                    
-                    // Opcional: Actualizar datos si vienen en el CSV y están vacíos en la BD?
-                    // Por ahora, solo usamos el existente.
+                    $hasAnyUpdate = false;
+                    $updateData = [
+                        'first_name' => $existingParticipant['first_name'] ?? '',
+                        'last_name' => $existingParticipant['last_name'] ?? '',
+                        'email' => $existingParticipant['email'] ?? '',
+                        'identity_document' => $existingParticipant['identity_document'] ?? null,
+                        'phone' => $existingParticipant['phone'] ?? null,
+                        'country' => $existingParticipant['country'] ?? null,
+                        'notes' => $existingParticipant['notes'] ?? null
+                    ];
+
+                    if ($firstName !== '' && $firstName !== ($existingParticipant['first_name'] ?? '')) {
+                        $updateData['first_name'] = $firstName;
+                        $hasAnyUpdate = true;
+                    }
+                    if ($lastName !== '' && $lastName !== ($existingParticipant['last_name'] ?? '')) {
+                        $updateData['last_name'] = $lastName;
+                        $hasAnyUpdate = true;
+                    }
+                    if ($email !== '' && $email !== ($existingParticipant['email'] ?? '')) {
+                        $updateData['email'] = $email;
+                        $hasAnyUpdate = true;
+                    }
+                    if ($identityDocument !== '' && $identityDocument !== ($existingParticipant['identity_document'] ?? '')) {
+                        $updateData['identity_document'] = $identityDocument;
+                        $hasAnyUpdate = true;
+                    }
+                    if ($phone !== '' && $phone !== ($existingParticipant['phone'] ?? '')) {
+                        $updateData['phone'] = $phone;
+                        $hasAnyUpdate = true;
+                    }
+                    if ($notes !== '' && $notes !== ($existingParticipant['notes'] ?? '')) {
+                        $updateData['notes'] = $notes;
+                        $hasAnyUpdate = true;
+                    }
+
+                    if ($hasAnyUpdate) {
+                        $this->participantModel->update($participantId, $updateData);
+                    }
                 } else {
-                    // No existe: Intentar crear
-                    // Para crear, necesitamos Nombres y Apellidos obligatoriamente
-                    if ($firstName === '' || $lastName === '') {
+                    if ($email === '') {
                         $pdo->rollBack();
-                        $skippedMissingData++; // Nuevo contador para "falta nombre/apellido en registro nuevo"
+                        $skippedMissingData++;
                         continue;
                     }
 
@@ -552,7 +977,7 @@ class ParticipantController
 
         $message = 'Carga masiva completada. Se crearon ' . $createdEnrollments . ' matrículas.';
         if ($skippedExistingEnrollment > 0) $message .= ' Se omitieron ' . $skippedExistingEnrollment . ' ya inscritos.';
-        if ($skippedMissingData > 0) $message .= ' Se omitieron ' . $skippedMissingData . ' nuevos sin nombre/apellido.';
+        if ($skippedMissingData > 0) $message .= ' Se omitieron ' . $skippedMissingData . ' filas nuevas sin email.';
         if ($skippedInvalidRow > 0) $message .= ' Se omitieron ' . $skippedInvalidRow . ' con errores.';
 
         return [$message, null];
@@ -560,20 +985,175 @@ class ParticipantController
 
     private function getEvents(PDO $pdo): array
     {
-        // Use 'cursos' table
-        $stmt = $pdo->query('SELECT id, nombre as name, event_code FROM cursos ORDER BY created_at DESC, nombre ASC');
+        $courseNameCol = $this->firstExistingColumn($pdo, 'cursos', ['nombre', 'name', 'titulo', 'nombre_curso']);
+        if ($courseNameCol === null) {
+            return [];
+        }
+
+        $hasEventCode = $this->columnExists($pdo, 'cursos', 'event_code');
+        $hasCreatedAt = $this->columnExists($pdo, 'cursos', 'created_at');
+
+        $selectEventCode = $hasEventCode ? 'event_code' : "'' as event_code";
+        $orderBy = $hasCreatedAt ? 'created_at DESC, ' . $courseNameCol . ' ASC' : $courseNameCol . ' ASC';
+
+        $stmt = $pdo->query('SELECT id, ' . $courseNameCol . ' as name, ' . $selectEventCode . ' FROM cursos ORDER BY ' . $orderBy);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    private function getParticipants(PDO $pdo, int $page = 1, int $limit = 10, string $search = '', ?int $courseId = null): array
+    private function getParticipants(PDO $pdo, int $page = 1, int $limit = 10, string $search = '', ?int $courseId = null, bool $debug = false): array
     {
         $offset = ($page - 1) * $limit;
+        $courseNameCol = $this->firstExistingColumn($pdo, 'cursos', ['nombre', 'name', 'titulo', 'nombre_curso']);
+        $hasCourseEventCode = $this->columnExists($pdo, 'cursos', 'event_code');
+
+        $hasUserLegacyFullName = $this->columnExists($pdo, 'usuarios', 'nombres_apellidos');
+        $userFirstNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['first_name', 'nombres']);
+        $userLastNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['last_name', 'apellidos']);
+        $identityCol = $this->firstExistingColumn($pdo, 'usuarios', ['identity_document', 'documento_identidad']);
+        $phoneCol = $this->firstExistingColumn($pdo, 'usuarios', ['phone', 'movil', 'celular']);
+        $countryCol = $this->firstExistingColumn($pdo, 'usuarios', ['country', 'pais']);
+        $notesCol = $this->firstExistingColumn($pdo, 'usuarios', ['notes', 'observaciones']);
+        $emailCol = $this->firstExistingColumn($pdo, 'usuarios', ['email', 'correo']);
+
         $params = [];
         $conditions = [];
 
+        $search = preg_replace('/\s+/', ' ', trim($search));
+        $terms = [];
         if ($search !== '') {
-            $conditions[] = '(p.first_name LIKE :search OR p.last_name LIKE :search OR p.identity_document LIKE :search OR p.email LIKE :search OR c.nombre LIKE :search)';
-            $params[':search'] = "%$search%";
+            $rawTerms = preg_split('/\s+/', $search) ?: [];
+            foreach ($rawTerms as $t) {
+                $t = trim((string)$t);
+                if ($t !== '') {
+                    $terms[] = $t;
+                }
+            }
+
+            if (count($terms) <= 1) {
+                $searchParts = [];
+                $searchValue = '%' . strtolower($search) . '%';
+                $searchIndex = 0;
+                if ($userFirstNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $ph;
+                }
+                if ($userLastNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $ph;
+                }
+                if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                    $concatCols = [];
+                    if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                    if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $ph;
+                }
+                if ($hasUserLegacyFullName) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $ph;
+                }
+                if ($identityCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $ph;
+                }
+                if ($phoneCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $ph;
+                }
+                if ($countryCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $ph;
+                }
+                if ($notesCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $ph;
+                }
+                if ($emailCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $ph;
+                }
+                if ($courseNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $ph;
+                }
+                if ($hasCourseEventCode) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(c.event_code) LIKE ' . $ph;
+                }
+                if (!empty($searchParts)) {
+                    $conditions[] = '(' . implode(' OR ', $searchParts) . ')';
+                }
+            } else {
+                $termIndex = 0;
+                foreach ($terms as $term) {
+                    $param = ':t' . $termIndex;
+                    $termIndex++;
+
+                    $searchParts = [];
+                    if ($userFirstNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userLastNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                        $concatCols = [];
+                        if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                        if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                        $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                    }
+                    if ($hasUserLegacyFullName) {
+                        $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                    }
+                    if ($identityCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                    }
+                    if ($phoneCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                    }
+                    if ($countryCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                    }
+                    if ($notesCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                    }
+                    if ($emailCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                    }
+                    if ($courseNameCol !== null) {
+                        $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $param;
+                    }
+                    if ($hasCourseEventCode) {
+                        $searchParts[] = 'LOWER(c.event_code) LIKE ' . $param;
+                    }
+                    if (!empty($searchParts)) {
+                        $params[$param] = '%' . strtolower($term) . '%';
+                        $conditions[] = '(' . implode(' OR ', $searchParts) . ')';
+                    }
+                }
+            }
         }
 
         if ($courseId) {
@@ -586,45 +1166,596 @@ class ParticipantController
             $where = 'WHERE ' . implode(' AND ', $conditions);
         }
 
-        // Use 'usuarios', 'curso_estudiantes', 'cursos'
-        $countSql = "SELECT COUNT(*) 
-                     FROM usuarios p 
-                     LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
-                     LEFT JOIN cursos c ON ce.curso_id = c.id 
-                     $where";
-        $stmt = $pdo->prepare($countSql);
-        foreach ($params as $key => $val) {
-            $stmt->bindValue($key, $val);
-        }
-        $stmt->execute();
-        $total = $stmt->fetchColumn();
+        try {
+            $countSql = "SELECT COUNT(*) 
+                         FROM usuarios p 
+                         LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
+                         LEFT JOIN cursos c ON ce.curso_id = c.id 
+                         $where";
+            $stmt = $pdo->prepare($countSql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->execute();
+            $total = $stmt->fetchColumn();
 
-        $sql = "SELECT p.id, p.first_name, p.last_name, p.email, p.identity_document, 
-                       c.nombre as course_name, c.event_code, ce.status as enrollment_status, ce.created_at as enrollment_date,
-                       ce.id as enrollment_id, c.id as event_id
-                FROM usuarios p 
-                LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
-                LEFT JOIN cursos c ON ce.curso_id = c.id 
-                $where
-                ORDER BY ce.created_at DESC
-                LIMIT :limit OFFSET :offset";
-        
-        $stmt = $pdo->prepare($sql);
-        foreach ($params as $key => $val) {
-            $stmt->bindValue($key, $val);
-        }
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-        $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $firstNameExpr = $userFirstNameCol !== null ? 'p.' . $userFirstNameCol : "''";
+            $lastNameExpr = $userLastNameCol !== null ? 'p.' . $userLastNameCol : "''";
+            if ($hasUserLegacyFullName) {
+                if ($userFirstNameCol !== null) {
+                    $firstNameExpr = "COALESCE(NULLIF(p." . $userFirstNameCol . ", ''), SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1))";
+                } else {
+                    $firstNameExpr = "SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)";
+                }
+                if ($userLastNameCol !== null) {
+                    $lastNameExpr = "COALESCE(NULLIF(p." . $userLastNameCol . ", ''), TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2)))";
+                } else {
+                    $lastNameExpr = "TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2))";
+                }
+            }
 
-        return [
+            $identityExpr = $identityCol !== null ? 'p.' . $identityCol : "''";
+            $courseNameExpr = $courseNameCol !== null ? 'c.' . $courseNameCol : "''";
+            $eventCodeExpr = $hasCourseEventCode ? 'c.event_code' : "''";
+            $emailExpr = $emailCol !== null ? 'p.' . $emailCol : "''";
+
+            $sql = "SELECT p.id, $firstNameExpr as first_name, $lastNameExpr as last_name, $emailExpr as email, $identityExpr as identity_document, 
+                           $courseNameExpr as course_name, $eventCodeExpr as event_code, ce.status as enrollment_status, ce.created_at as enrollment_date,
+                           ce.id as enrollment_id, c.id as event_id
+                    FROM usuarios p 
+                    LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
+                    LEFT JOIN cursos c ON ce.curso_id = c.id 
+                    $where
+                    ORDER BY ce.created_at DESC
+                    LIMIT :limit OFFSET :offset";
+            
+            $stmt = $pdo->prepare($sql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            if ($search !== '' && empty($data) && count($terms) > 1) {
+                $params = [];
+                $orGroups = [];
+                $termIndex = 0;
+                foreach ($terms as $term) {
+                    $param = ':t' . $termIndex;
+                    $termIndex++;
+
+                    $searchParts = [];
+                    if ($userFirstNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userLastNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                        $concatCols = [];
+                        if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                        if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                        $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                    }
+                    if ($hasUserLegacyFullName) {
+                        $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                    }
+                    if ($identityCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                    }
+                    if ($phoneCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                    }
+                    if ($countryCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                    }
+                    if ($notesCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                    }
+                    if ($emailCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                    }
+                    if ($courseNameCol !== null) {
+                        $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $param;
+                    }
+                    if ($hasCourseEventCode) {
+                        $searchParts[] = 'LOWER(c.event_code) LIKE ' . $param;
+                    }
+                    if (!empty($searchParts)) {
+                        $params[$param] = '%' . strtolower($term) . '%';
+                        $orGroups[] = '(' . implode(' OR ', $searchParts) . ')';
+                    }
+                }
+
+                if ($courseId) {
+                    $params[':courseId'] = $courseId;
+                }
+
+                $conditions = [];
+                if (!empty($orGroups)) {
+                    $conditions[] = '(' . implode(' OR ', $orGroups) . ')';
+                }
+                if ($courseId) {
+                    $conditions[] = 'c.id = :courseId';
+                }
+                $where = '';
+                if (!empty($conditions)) {
+                    $where = 'WHERE ' . implode(' AND ', $conditions);
+                }
+
+                $countSql = "SELECT COUNT(*) 
+                             FROM usuarios p 
+                             LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
+                             LEFT JOIN cursos c ON ce.curso_id = c.id 
+                             $where";
+                $stmt = $pdo->prepare($countSql);
+                foreach ($params as $key => $val) {
+                    $stmt->bindValue($key, $val);
+                }
+                $stmt->execute();
+                $total = $stmt->fetchColumn();
+
+                $sql = "SELECT p.id, $firstNameExpr as first_name, $lastNameExpr as last_name, $emailExpr as email, $identityExpr as identity_document, 
+                               $courseNameExpr as course_name, $eventCodeExpr as event_code, ce.status as enrollment_status, ce.created_at as enrollment_date,
+                               ce.id as enrollment_id, c.id as event_id
+                        FROM usuarios p 
+                        LEFT JOIN curso_estudiantes ce ON p.id = ce.usuario_id 
+                        LEFT JOIN cursos c ON ce.curso_id = c.id 
+                        $where
+                        ORDER BY ce.created_at DESC
+                        LIMIT :limit OFFSET :offset";
+
+                $stmt = $pdo->prepare($sql);
+                foreach ($params as $key => $val) {
+                    $stmt->bindValue($key, $val);
+                }
+                $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+                $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+                $stmt->execute();
+                $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+
+            if ($search !== '' && empty($data)) {
+                return $this->searchParticipantsUsersOnly($pdo, $page, $limit, $search, $debug);
+            }
+
+            $result = [
+                'data' => $data,
+                'total' => $total,
+                'page' => $page,
+                'limit' => $limit,
+                'totalPages' => ($limit > 0) ? ceil($total / $limit) : 0
+            ];
+            if ($debug) {
+                $dbName = null;
+                try {
+                    $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+                } catch (Throwable $e) {
+                }
+                $result['debug'] = [
+                    'strategy' => 'new_schema',
+                    'db' => $dbName,
+                    'search' => $search,
+                    'returned' => count($data),
+                    'total' => (int)$total
+                ];
+            }
+            return $result;
+        } catch (PDOException $e) {
+            error_log('getParticipants (schema nuevo) falló, intentando esquema legacy: ' . $e->getMessage());
+        }
+
+        if (!$this->tableExists($pdo, 'usuarios')) {
+            $result = [
+                'data' => [],
+                'total' => 0,
+                'page' => $page,
+                'limit' => $limit,
+                'totalPages' => 0
+            ];
+            if ($debug) {
+                $dbName = null;
+                try {
+                    $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+                } catch (Throwable $e) {
+                }
+                $result['debug'] = [
+                    'strategy' => 'no_usuarios',
+                    'db' => $dbName,
+                    'search' => $search,
+                    'returned' => 0,
+                    'total' => 0
+                ];
+            }
+            return $result;
+        }
+        if (!$this->tableExists($pdo, 'cursos') || !$this->tableExists($pdo, 'certificados')) {
+            if ($courseId !== null) {
+                return [
+                    'data' => [],
+                    'total' => 0,
+                    'page' => $page,
+                    'limit' => $limit,
+                    'totalPages' => 0
+                ];
+            }
+            return $this->searchParticipantsUsersOnly($pdo, $page, $limit, $search, $debug);
+        }
+
+        $courseNameCol = $this->firstExistingColumn($pdo, 'cursos', ['nombre', 'name', 'titulo', 'nombre_curso']);
+        $hasEventCode = $this->columnExists($pdo, 'cursos', 'event_code');
+
+        $hasUserFullName = $this->columnExists($pdo, 'usuarios', 'nombres_apellidos');
+        $userFirstNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['first_name', 'nombres']);
+        $userLastNameCol = $this->firstExistingColumn($pdo, 'usuarios', ['last_name', 'apellidos']);
+        $identityCol = $this->firstExistingColumn($pdo, 'usuarios', ['identity_document', 'documento_identidad']);
+        $phoneCol = $this->firstExistingColumn($pdo, 'usuarios', ['phone', 'movil', 'celular']);
+        $countryCol = $this->firstExistingColumn($pdo, 'usuarios', ['country', 'pais']);
+        $notesCol = $this->firstExistingColumn($pdo, 'usuarios', ['notes', 'observaciones']);
+        $emailCol = $this->firstExistingColumn($pdo, 'usuarios', ['email', 'correo']);
+
+        $certDateCol = $this->firstExistingColumn($pdo, 'certificados', ['fecha_generacion', 'created_at', 'fecha_creacion']);
+
+        $params = [];
+        $conditions = [];
+
+        $search = preg_replace('/\s+/', ' ', trim($search));
+        $terms = [];
+        if ($search !== '') {
+            $rawTerms = preg_split('/\s+/', $search) ?: [];
+            foreach ($rawTerms as $t) {
+                $t = trim((string)$t);
+                if ($t !== '') {
+                    $terms[] = $t;
+                }
+            }
+
+            if (count($terms) <= 1) {
+                $searchParts = [];
+                $searchValue = '%' . strtolower($search) . '%';
+                $searchIndex = 0;
+                if ($hasUserFullName) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $ph;
+                }
+                if ($userFirstNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $ph;
+                }
+                if ($userLastNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $ph;
+                }
+                if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                    $concatCols = [];
+                    if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                    if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $ph;
+                }
+                if ($identityCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $ph;
+                }
+                if ($phoneCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $ph;
+                }
+                if ($countryCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $ph;
+                }
+                if ($notesCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $ph;
+                }
+                if ($emailCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $ph;
+                }
+                if ($courseNameCol !== null) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $ph;
+                }
+                if ($hasEventCode) {
+                    $ph = ':s' . $searchIndex;
+                    $searchIndex++;
+                    $params[$ph] = $searchValue;
+                    $searchParts[] = 'LOWER(c.event_code) LIKE ' . $ph;
+                }
+                if (!empty($searchParts)) {
+                    $conditions[] = '(' . implode(' OR ', $searchParts) . ')';
+                }
+            } else {
+                $termIndex = 0;
+                foreach ($terms as $term) {
+                    $param = ':t' . $termIndex;
+                    $termIndex++;
+
+                    $searchParts = [];
+                    if ($hasUserFullName) {
+                        $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                    }
+                    if ($userFirstNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userLastNameCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $param;
+                    }
+                    if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                        $concatCols = [];
+                        if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                        if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                        $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                    }
+                    if ($identityCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                    }
+                    if ($phoneCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                    }
+                    if ($countryCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                    }
+                    if ($notesCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                    }
+                    if ($emailCol !== null) {
+                        $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                    }
+                    if ($courseNameCol !== null) {
+                        $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $param;
+                    }
+                    if ($hasEventCode) {
+                        $searchParts[] = 'LOWER(c.event_code) LIKE ' . $param;
+                    }
+                    if (!empty($searchParts)) {
+                        $params[$param] = '%' . strtolower($term) . '%';
+                        $conditions[] = '(' . implode(' OR ', $searchParts) . ')';
+                    }
+                }
+            }
+        }
+
+        if ($courseId) {
+            $conditions[] = 'c.id = :courseId';
+            $params[':courseId'] = $courseId;
+        }
+
+        $where = '';
+        if (!empty($conditions)) {
+            $where = 'WHERE ' . implode(' AND ', $conditions);
+        }
+
+        $firstNameExpr = "''";
+        $lastNameExpr = "''";
+        if ($hasUserFullName) {
+            $firstNameExpr = "SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)";
+            $lastNameExpr = "TRIM(SUBSTRING(p.nombres_apellidos, LENGTH(SUBSTRING_INDEX(p.nombres_apellidos, ' ', 1)) + 2))";
+        } else {
+            if ($userFirstNameCol !== null) {
+                $firstNameExpr = 'p.' . $userFirstNameCol;
+            }
+            if ($userLastNameCol !== null) {
+                $lastNameExpr = 'p.' . $userLastNameCol;
+            }
+        }
+
+        $identityExpr = $identityCol !== null ? 'p.' . $identityCol : "''";
+        $emailExpr = $emailCol !== null ? 'p.' . $emailCol : "''";
+        $courseNameExpr = $courseNameCol !== null ? 'c.' . $courseNameCol : "''";
+        $eventCodeExpr = $hasEventCode ? 'c.event_code' : "''";
+        $dateExpr = $certDateCol !== null ? 'cert.' . $certDateCol : 'NULL';
+        $orderDateExpr = $certDateCol !== null ? 'cert.' . $certDateCol : 'cert.id';
+
+        try {
+            $countSql = "SELECT COUNT(*) 
+                         FROM usuarios p
+                         LEFT JOIN certificados cert ON p.id = cert.usuario_id
+                         LEFT JOIN cursos c ON cert.curso_id = c.id
+                         $where";
+            $stmt = $pdo->prepare($countSql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->execute();
+            $total = $stmt->fetchColumn();
+
+            $sql = "SELECT
+                        p.id,
+                        $firstNameExpr as first_name,
+                        $lastNameExpr as last_name,
+                        $emailExpr as email,
+                        $identityExpr as identity_document,
+                        $courseNameExpr as course_name,
+                        $eventCodeExpr as event_code,
+                        'completed' as enrollment_status,
+                        $dateExpr as enrollment_date,
+                        NULL as enrollment_id,
+                        c.id as event_id
+                    FROM usuarios p
+                    LEFT JOIN certificados cert ON p.id = cert.usuario_id
+                    LEFT JOIN cursos c ON cert.curso_id = c.id
+                    $where
+                    ORDER BY $orderDateExpr DESC
+                    LIMIT :limit OFFSET :offset";
+            
+            $stmt = $pdo->prepare($sql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log('getParticipants (schema legacy) falló: ' . $e->getMessage());
+            return [
+                'data' => [],
+                'total' => 0,
+                'page' => $page,
+                'limit' => $limit,
+                'totalPages' => 0
+            ];
+        }
+
+        if ($search !== '' && empty($data) && count($terms) > 1) {
+            $params = [];
+            $orGroups = [];
+            $termIndex = 0;
+            foreach ($terms as $term) {
+                $param = ':t' . $termIndex;
+                $termIndex++;
+
+                $searchParts = [];
+                if ($hasUserFullName) {
+                    $searchParts[] = 'LOWER(p.nombres_apellidos) LIKE ' . $param;
+                }
+                if ($userFirstNameCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $userFirstNameCol . ') LIKE ' . $param;
+                }
+                if ($userLastNameCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $userLastNameCol . ') LIKE ' . $param;
+                }
+                if ($userFirstNameCol !== null || $userLastNameCol !== null) {
+                    $concatCols = [];
+                    if ($userFirstNameCol !== null) $concatCols[] = 'p.' . $userFirstNameCol;
+                    if ($userLastNameCol !== null) $concatCols[] = 'p.' . $userLastNameCol;
+                    $searchParts[] = "LOWER(CONCAT_WS(' ', " . implode(', ', $concatCols) . ")) LIKE " . $param;
+                }
+                if ($identityCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $identityCol . ') LIKE ' . $param;
+                }
+                if ($phoneCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $phoneCol . ') LIKE ' . $param;
+                }
+                if ($countryCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $countryCol . ') LIKE ' . $param;
+                }
+                if ($notesCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $notesCol . ') LIKE ' . $param;
+                }
+                if ($emailCol !== null) {
+                    $searchParts[] = 'LOWER(p.' . $emailCol . ') LIKE ' . $param;
+                }
+                if ($courseNameCol !== null) {
+                    $searchParts[] = 'LOWER(c.' . $courseNameCol . ') LIKE ' . $param;
+                }
+                if ($hasEventCode) {
+                    $searchParts[] = 'LOWER(c.event_code) LIKE ' . $param;
+                }
+                if (!empty($searchParts)) {
+                    $params[$param] = '%' . strtolower($term) . '%';
+                    $orGroups[] = '(' . implode(' OR ', $searchParts) . ')';
+                }
+            }
+
+            if ($courseId) {
+                $params[':courseId'] = $courseId;
+            }
+
+            $conditions = [];
+            if (!empty($orGroups)) {
+                $conditions[] = '(' . implode(' OR ', $orGroups) . ')';
+            }
+            if ($courseId) {
+                $conditions[] = 'c.id = :courseId';
+            }
+
+            $where = '';
+            if (!empty($conditions)) {
+                $where = 'WHERE ' . implode(' AND ', $conditions);
+            }
+
+            $countSql = "SELECT COUNT(*) 
+                         FROM usuarios p
+                         LEFT JOIN certificados cert ON p.id = cert.usuario_id
+                         LEFT JOIN cursos c ON cert.curso_id = c.id
+                         $where";
+            $stmt = $pdo->prepare($countSql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->execute();
+            $total = $stmt->fetchColumn();
+
+            $sql = "SELECT
+                        p.id,
+                        $firstNameExpr as first_name,
+                        $lastNameExpr as last_name,
+                        $emailExpr as email,
+                        $identityExpr as identity_document,
+                        $courseNameExpr as course_name,
+                        $eventCodeExpr as event_code,
+                        'completed' as enrollment_status,
+                        $dateExpr as enrollment_date,
+                        NULL as enrollment_id,
+                        c.id as event_id
+                    FROM usuarios p
+                    LEFT JOIN certificados cert ON p.id = cert.usuario_id
+                    LEFT JOIN cursos c ON cert.curso_id = c.id
+                    $where
+                    ORDER BY $orderDateExpr DESC
+                    LIMIT :limit OFFSET :offset";
+
+            $stmt = $pdo->prepare($sql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        if ($search !== '' && empty($data)) {
+            return $this->searchParticipantsUsersOnly($pdo, $page, $limit, $search, $debug);
+        }
+
+        $result = [
             'data' => $data,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
             'totalPages' => ($limit > 0) ? ceil($total / $limit) : 0
         ];
+        if ($debug) {
+            $dbName = null;
+            try {
+                $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+            } catch (Throwable $e) {
+            }
+            $result['debug'] = [
+                'strategy' => 'legacy_schema',
+                'db' => $dbName,
+                'search' => $search,
+                'returned' => count($data),
+                'total' => (int)$total
+            ];
+        }
+        return $result;
     }
 
     private function findOrCreateParticipant(

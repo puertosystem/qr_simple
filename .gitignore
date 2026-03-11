@@ -12,3 +12,6 @@ update_*.zip
 
 # Ignore license key file
 config/license.key
+
+# Dump de BD local (no debe subirse a GitHub ni incluirse en updates)
+aulavirtual.sql

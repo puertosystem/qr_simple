@@ -62,7 +62,7 @@
                 <div class="card-tools">
                   <form action="index.php" method="get">
                     <input type="hidden" name="page" value="participants">
-                    <?php if (isset($_GET['course_id'])): ?>
+                    <?php if (isset($_GET['course_id']) && (!isset($_GET['q']) || trim((string)$_GET['q']) === '')): ?>
                         <input type="hidden" name="course_id" value="<?php echo (int)$_GET['course_id']; ?>">
                     <?php endif; ?>
                     <div class="input-group input-group-sm" style="width: 250px;">
@@ -98,13 +98,17 @@
                       <?php foreach ($participantsData['data'] as $row): ?>
                         <tr>
                           <td>
-                            <?php echo htmlspecialchars($row['first_name'] . ' ' . $row['last_name']); ?><br>
-                            <small class="text-muted"><?php echo htmlspecialchars($row['email']); ?></small>
+                            <?php
+                              $fullName = trim((string)($row['first_name'] ?? '') . ' ' . (string)($row['last_name'] ?? ''));
+                              if ($fullName === '') $fullName = 'Sin nombre';
+                            ?>
+                            <?php echo htmlspecialchars($fullName); ?><br>
+                            <small class="text-muted"><?php echo htmlspecialchars((string)($row['email'] ?? '')); ?></small>
                           </td>
-                          <td><?php echo htmlspecialchars($row['identity_document']); ?></td>
+                          <td><?php echo htmlspecialchars((string)($row['identity_document'] ?? '')); ?></td>
                           <td>
                             <?php
-                              $courseName = $row['course_name'];
+                              $courseName = (string)($row['course_name'] ?? '');
                               $maxLen = 70;
                               if (function_exists('mb_strlen')) {
                                   if (mb_strlen($courseName, 'UTF-8') > $maxLen) {
@@ -115,9 +119,9 @@
                                       $courseName = substr($courseName, 0, $maxLen - 3) . '...';
                                   }
                               }
-                              echo htmlspecialchars($courseName);
+                              echo htmlspecialchars($courseName !== '' ? $courseName : 'Sin matrícula');
                             ?><br>
-                            <small class="text-muted"><?php echo htmlspecialchars($row['event_code']); ?></small>
+                            <small class="text-muted"><?php echo htmlspecialchars((string)($row['event_code'] ?? '')); ?></small>
                           </td>
                           <td>
                             <?php
@@ -126,19 +130,26 @@
                                 'completed' => '<span class="badge badge-primary">Completado</span>',
                                 'pending' => '<span class="badge badge-warning">Pendiente</span>'
                               ];
-                              echo $statusLabels[$row['enrollment_status']] ?? $row['enrollment_status'];
+                              $enrollmentStatus = (string)($row['enrollment_status'] ?? '');
+                              echo $statusLabels[$enrollmentStatus] ?? htmlspecialchars($enrollmentStatus);
                             ?>
                           </td>
-                          <td><?php echo date('d/m/Y H:i', strtotime($row['enrollment_date'])); ?></td>
+                          <td>
+                            <?php
+                              $enrollmentDate = (string)($row['enrollment_date'] ?? '');
+                              $enrollmentTs = $enrollmentDate !== '' ? strtotime($enrollmentDate) : false;
+                              echo htmlspecialchars($enrollmentTs ? date('d/m/Y H:i', $enrollmentTs) : '—');
+                            ?>
+                          </td>
                           <td>
                             <button type="button" class="btn btn-sm btn-info btn-edit-participant" 
                                     data-id="<?php echo $row['id']; ?>" 
-                                    data-enrollment-id="<?php echo $row['enrollment_id']; ?>">
+                                    data-enrollment-id="<?php echo $row['enrollment_id'] ?? ''; ?>">
                               <i class="fas fa-edit"></i> Editar
                             </button>
                             <button type="button" class="btn btn-sm btn-primary btn-manage-courses" 
                                     data-id="<?php echo $row['id']; ?>" 
-                                    data-name="<?php echo htmlspecialchars($row['first_name'] . ' ' . $row['last_name']); ?>">
+                                    data-name="<?php echo htmlspecialchars($fullName); ?>">
                               <i class="fas fa-graduation-cap"></i> Cursos
                             </button>
                           </td>
@@ -159,7 +170,7 @@
                   $totalPages = $participantsData['totalPages'];
                   $currentPage = $participantsData['page'];
                   $q = isset($_GET['q']) ? '&q=' . urlencode($_GET['q']) : '';
-                  $courseParam = isset($_GET['course_id']) ? '&course_id=' . (int)$_GET['course_id'] : '';
+                  $courseParam = (isset($_GET['course_id']) && (!isset($_GET['q']) || trim((string)$_GET['q']) === '')) ? '&course_id=' . (int)$_GET['course_id'] : '';
                 ?>
                 <ul class="pagination pagination-sm m-0 float-right">
                   <li class="page-item <?php echo $currentPage <= 1 ? 'disabled' : ''; ?>">
