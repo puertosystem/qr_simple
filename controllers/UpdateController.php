@@ -41,32 +41,43 @@ class UpdateController {
     public function applyDbUpdate() {
         header('Content-Type: application/json');
         
-        // Buscar archivo de actualización
-        $sqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
-        $sqlFile = !empty($sqlFiles) ? end($sqlFiles) : '';
-
-        if (!$sqlFile || !file_exists($sqlFile)) {
-            echo json_encode(['status' => 'error', 'message' => 'No se encontró el archivo de actualización de base de datos (views/updates/update_server_db*.sql).']);
-            exit;
-        }
-        
         try {
             require_once __DIR__ . '/../config/database.php';
             $pdo = Database::getConnection();
-            
-            $sql = file_get_contents($sqlFile);
-            
-            // Ejecutar consultas
-            $pdo->exec($sql);
-            
-            // Guardar hash para evitar repetir la actualización si vuelve el mismo archivo
-            $this->saveDbUpdateHash(md5(trim($sql)));
-            
-            // Eliminar el archivo después de actualizar para evitar que se ejecute de nuevo
-            @unlink($sqlFile);
 
-            // Limpieza profunda: Eliminar cualquier otro archivo SQL de actualización antiguo
-            // para evitar acumulación y conflictos en el cliente
+            $localDbVersion = $this->getDbVersion();
+            $scripts = $this->getDbUpdateScripts();
+            $scriptsToApply = array_values(array_filter($scripts, function ($s) use ($localDbVersion) {
+                return version_compare($localDbVersion, $s['required_db_version'], '<');
+            }));
+
+            if (empty($scriptsToApply)) {
+                echo json_encode(['status' => 'success', 'message' => 'No hay actualizaciones de base de datos pendientes.']);
+                exit;
+            }
+
+            $maxAppliedDbVersion = $localDbVersion;
+            $lastExecutedHash = '';
+
+            foreach ($scriptsToApply as $script) {
+                $sql = file_get_contents($script['path']);
+                if (!is_string($sql) || trim($sql) === '') {
+                    continue;
+                }
+
+                $pdo->exec($sql);
+                $lastExecutedHash = md5(trim($sql));
+                if (version_compare($maxAppliedDbVersion, $script['required_db_version'], '<')) {
+                    $maxAppliedDbVersion = $script['required_db_version'];
+                }
+
+                @unlink($script['path']);
+            }
+
+            if ($lastExecutedHash !== '') {
+                $this->saveDbUpdateHash($lastExecutedHash, $maxAppliedDbVersion);
+            }
+
             $allSqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
             if ($allSqlFiles) {
                 foreach ($allSqlFiles as $f) {
@@ -86,44 +97,7 @@ class UpdateController {
         $requirements = $this->checkSystemRequirements();
         $currentVersion = APP_VERSION;
         
-        // Verificar si existe una actualización de base de datos pendiente
-        // Buscar archivo con patrón update_server_db_X.X.X.sql o update_server_db.sql
-        $sqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
-        $sqlFile = !empty($sqlFiles) ? end($sqlFiles) : ''; // Tomar el último (asumiendo orden alfabético/versión)
-        
-        $dbUpdateAvailable = false;
-
-        if ($sqlFile && file_exists($sqlFile)) {
-            $sqlContent = trim(file_get_contents($sqlFile));
-            if (!empty($sqlContent)) {
-                // Validación 1: Verificar Hash
-                $currentHash = md5($sqlContent);
-                $lastHash = $this->getLastDbUpdateHash();
-                
-                // Validación 2: Verificar Versión Registrada en BD
-                $dbVersion = $this->getDbVersion();
-                
-                // Mostrar actualización SI:
-                // 1. El hash es diferente (contenido nuevo)
-                // Y
-                // 2. La versión de la App es MAYOR a la versión registrada en la BD
-                //    (Esto evita que al reinstalar la misma versión salga el aviso)
-                
-                // Corrección Lógica: Si el hash es igual, NO mostrar.
-                // Si el hash es diferente, PERO la versión DB ya es igual o mayor a la actual, tampoco mostrar (ya se actualizó por otro medio o es un falso positivo)
-
-                
-                if ($currentHash !== $lastHash) {
-                     // Solo si el hash es distinto, comprobamos versiones como seguridad adicional
-                     // Si la DB dice que ya tiene la versión 1.1.5 y la APP es 1.1.5, no debería pedir actualizar DB
-                     // salvo que queramos forzarlo.
-                     
-                     if (version_compare($dbVersion, APP_VERSION, '<')) {
-                         $dbUpdateAvailable = true;
-                     }
-                }
-            }
-        }
+        $dbUpdateAvailable = $this->isDbUpdateAvailable();
         
         require __DIR__ . '/../views/updates/index.php';
     }
@@ -132,10 +106,17 @@ class UpdateController {
         try {
             require_once __DIR__ . '/../config/database.php';
             $pdo = Database::getConnection();
-            $stmt = $pdo->prepare("SELECT valor FROM configuracion WHERE clave = 'app_version'");
+            $stmt = $pdo->prepare("SELECT valor FROM configuracion WHERE clave = 'db_version'");
             $stmt->execute();
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
-            return $result ? $result['valor'] : '0.0.0';
+            if ($result && isset($result['valor'])) {
+                return $result['valor'];
+            }
+
+            $stmt2 = $pdo->prepare("SELECT valor FROM configuracion WHERE clave = 'app_version'");
+            $stmt2->execute();
+            $result2 = $stmt2->fetch(PDO::FETCH_ASSOC);
+            return $result2 ? $result2['valor'] : '0.0.0';
         } catch (Exception $e) {
             return '0.0.0';
         }
@@ -158,7 +139,7 @@ class UpdateController {
         }
     }
 
-    private function saveDbUpdateHash($hash) {
+    private function saveDbUpdateHash($hash, $dbVersion = null) {
         try {
             require_once __DIR__ . '/../config/database.php';
             $pdo = Database::getConnection();
@@ -173,9 +154,10 @@ class UpdateController {
             $stmt = $pdo->prepare("REPLACE INTO configuracion (clave, valor) VALUES ('last_db_update_hash', ?)");
             $stmt->execute([$hash]);
 
-            // Guardar versión de la App como versión de DB actualizada
-            $stmt2 = $pdo->prepare("REPLACE INTO configuracion (clave, valor) VALUES ('app_version', ?)");
-            $stmt2->execute([APP_VERSION]);
+            if ($dbVersion) {
+                $stmt2 = $pdo->prepare("REPLACE INTO configuracion (clave, valor) VALUES ('db_version', ?)");
+                $stmt2->execute([$dbVersion]);
+            }
             
         } catch (Exception $e) {
             error_log("Error guardando hash de actualización BD: " . $e->getMessage());
@@ -226,7 +208,11 @@ class UpdateController {
             exit;
         }
 
-        // Comparar versiones
+        $remoteDbVersion = isset($updateInfo['db_version']) ? (string)$updateInfo['db_version'] : '0.0.0';
+        $localDbVersion = $this->getDbVersion();
+        $dbUpdateRequired = version_compare($remoteDbVersion, $localDbVersion, '>');
+
+        // Comparar versiones de la App
         if (version_compare($updateInfo['version'], APP_VERSION, '>')) {
             echo json_encode([
                 'status' => 'success',
@@ -234,13 +220,17 @@ class UpdateController {
                 'version' => $updateInfo['version'],
                 'description' => $updateInfo['description'],
                 'date' => $updateInfo['date'],
-                'download_url' => $updateInfo['download_url']
+                'download_url' => $updateInfo['download_url'],
+                'db_version' => $remoteDbVersion,
+                'db_update_required' => $dbUpdateRequired
             ]);
         } else {
             echo json_encode([
                 'status' => 'success',
                 'update_available' => false,
-                'message' => 'Tu sistema está actualizado. Tienes la última versión (' . APP_VERSION . ').'
+                'message' => 'Tu sistema está actualizado. Tienes la última versión (' . APP_VERSION . ').',
+                'db_version' => $remoteDbVersion,
+                'db_update_required' => $dbUpdateRequired
             ]);
         }
         exit;
@@ -278,7 +268,20 @@ class UpdateController {
         if ($this->extractAndInstall($zipFile)) {
             // Limpiar
             @unlink($zipFile);
-            echo json_encode(['status' => 'success', 'message' => 'Actualización instalada correctamente.']);
+            $dbUpdateRequired = $this->isDbUpdateAvailable();
+            if (!$dbUpdateRequired) {
+                $allSqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
+                if ($allSqlFiles) {
+                    foreach ($allSqlFiles as $f) {
+                        @unlink($f);
+                    }
+                }
+            }
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'Actualización instalada correctamente.',
+                'db_update_required' => $dbUpdateRequired
+            ]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Error al descomprimir o instalar los archivos.']);
         }
@@ -415,5 +418,68 @@ class UpdateController {
             }
         }
         return false;
+    }
+
+    private function getDbVersionFromSqlFileName(string $sqlFile): string
+    {
+        if (preg_match('/^update_server_db_([0-9]+(?:\.[0-9]+)*)(?:_\d+)?\.sql$/', basename($sqlFile), $matches)) {
+            $v = trim((string)$matches[1]);
+            return $v !== '' ? $v : '0.0.0';
+        }
+        return APP_VERSION;
+    }
+
+    private function isDbUpdateAvailable(): bool
+    {
+        $localDbVersion = $this->getDbVersion();
+        $scripts = $this->getDbUpdateScripts();
+        foreach ($scripts as $script) {
+            if (version_compare($localDbVersion, $script['required_db_version'], '<')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function getDbUpdateScripts(): array
+    {
+        $sqlFiles = glob(__DIR__ . '/../views/updates/update_server_db*.sql');
+        if (!$sqlFiles) {
+            return [];
+        }
+
+        $scripts = [];
+        foreach ($sqlFiles as $path) {
+            if (!is_string($path) || !is_file($path)) {
+                continue;
+            }
+
+            $sqlContent = @file_get_contents($path);
+            if (!is_string($sqlContent) || trim($sqlContent) === '') {
+                continue;
+            }
+
+            $requiredDbVersion = $this->getDbVersionFromSqlFileName($path);
+            $seq = 0;
+            if (preg_match('/^update_server_db_[0-9]+(?:\.[0-9]+)*(?:_(\d+))?\.sql$/', basename($path), $m)) {
+                $seq = isset($m[1]) ? (int)$m[1] : 0;
+            }
+
+            $scripts[] = [
+                'path' => $path,
+                'required_db_version' => $requiredDbVersion,
+                'seq' => $seq,
+            ];
+        }
+
+        usort($scripts, function ($a, $b) {
+            $vc = version_compare($a['required_db_version'], $b['required_db_version']);
+            if ($vc !== 0) {
+                return $vc;
+            }
+            return ($a['seq'] ?? 0) <=> ($b['seq'] ?? 0);
+        });
+
+        return $scripts;
     }
 }

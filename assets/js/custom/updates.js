@@ -81,14 +81,23 @@ function startUpdate() {
             
             if (response.status === 'success') {
                 resultArea.removeClass('alert-warning').addClass('alert-success');
-                resultArea.html(`
-                    <h5><i class="icon fas fa-check"></i> ¡Archivos Actualizados!</h5>
-                    <p>${response.message}</p>
-                    <hr>
-                    <p><strong>Paso final:</strong> Por favor actualice la base de datos para completar el proceso.</p>
-                    <button id="btn-db-update" class="btn btn-warning btn-lg btn-block" onclick="applyDbUpdate()"><i class="fas fa-database"></i> Actualizar Base de Datos</button>
-                    <div id="db-update-result" class="mt-3"></div>
-                `);
+                if (response.db_update_required) {
+                    resultArea.html(`
+                        <h5><i class="icon fas fa-check"></i> ¡Archivos Actualizados!</h5>
+                        <p>${response.message}</p>
+                        <hr>
+                        <p><strong>Paso final:</strong> Por favor actualice la base de datos para completar el proceso.</p>
+                        <button id="btn-db-update" class="btn btn-warning btn-lg btn-block" onclick="applyDbUpdate()"><i class="fas fa-database"></i> Actualizar Base de Datos</button>
+                        <div id="db-update-result" class="mt-3"></div>
+                    `);
+                } else {
+                    resultArea.html(`
+                        <h5><i class="icon fas fa-check"></i> ¡Actualización completada!</h5>
+                        <p>${response.message}</p>
+                        <p><strong>No se requiere actualización de base de datos.</strong></p>
+                        <button class="btn btn-primary mt-2" onclick="location.reload()">Finalizar</button>
+                    `);
+                }
             } else {
                 resultArea.removeClass('alert-warning').addClass('alert-danger');
                 resultArea.html(`

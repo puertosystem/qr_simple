@@ -1,0 +1,1 @@
+INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('db_version', '1.1.35') ON DUPLICATE KEY UPDATE `valor` = '1.1.35';

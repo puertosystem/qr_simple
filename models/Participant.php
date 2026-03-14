@@ -4,9 +4,29 @@ require_once __DIR__ . '/../config/database.php';
 class Participant {
     private $pdo;
     private $table = 'usuarios';
+    private $columnCache = [];
 
     public function __construct() {
         $this->pdo = Database::getConnection();
+    }
+
+    private function columnExists(string $column, ?string $table = null): bool {
+        $table = $table ?: $this->table;
+        $cacheKey = $table . '.' . $column;
+        if (array_key_exists($cacheKey, $this->columnCache)) {
+            return (bool)$this->columnCache[$cacheKey];
+        }
+
+        try {
+            $stmt = $this->pdo->prepare("SHOW COLUMNS FROM {$table} LIKE ?");
+            $stmt->execute([$column]);
+            $exists = (bool)$stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) {
+            $exists = false;
+        }
+
+        $this->columnCache[$cacheKey] = $exists;
+        return $exists;
     }
 
     public function findByEmail(string $email) {
@@ -25,42 +45,54 @@ class Participant {
         // Sync nombres_apellidos for legacy compatibility
         $nombresApellidos = trim($data['first_name'] . ' ' . $data['last_name']);
 
+        $fields = [
+            'first_name',
+            'last_name',
+            'nombres_apellidos',
+            'email'
+        ];
+        foreach (['identity_document', 'phone', 'notes', 'country'] as $optionalColumn) {
+            if ($this->columnExists($optionalColumn)) {
+                $fields[] = $optionalColumn;
+            }
+        }
+
+        $placeholders = array_map(function ($field) {
+            return ':' . $field;
+        }, $fields);
+
+        $insertFields = $fields;
+        $insertValues = $placeholders;
+        if ($this->columnExists('created_at')) {
+            $insertFields[] = 'created_at';
+            $insertValues[] = 'NOW()';
+        }
+        if ($this->columnExists('updated_at')) {
+            $insertFields[] = 'updated_at';
+            $insertValues[] = 'NOW()';
+        }
+
         $sql = "INSERT INTO {$this->table} (
-                    first_name, 
-                    last_name, 
-                    nombres_apellidos,
-                    email, 
-                    identity_document, 
-                    phone, 
-                    country,
-                    notes,
-                    created_at, 
-                    updated_at
+                    " . implode(", \n                    ", $insertFields) . "
                 ) VALUES (
-                    :first_name, 
-                    :last_name, 
-                    :nombres_apellidos,
-                    :email, 
-                    :identity_document, 
-                    :phone, 
-                    :country,
-                    :notes,
-                    NOW(), 
-                    NOW()
+                    " . implode(", \n                    ", $insertValues) . "
                 )";
 
         $stmt = $this->pdo->prepare($sql);
-        
-        $stmt->execute([
+
+        $params = [
             ':first_name' => $data['first_name'],
             ':last_name' => $data['last_name'],
             ':nombres_apellidos' => $nombresApellidos,
             ':email' => $data['email'],
-            ':identity_document' => $data['identity_document'] ?? null,
-            ':phone' => $data['phone'] ?? null,
-            ':country' => $data['country'] ?? null,
-            ':notes' => $data['notes'] ?? null
-        ]);
+        ];
+        foreach (['identity_document', 'phone', 'notes', 'country'] as $optionalColumn) {
+            if ($this->columnExists($optionalColumn)) {
+                $params[':' . $optionalColumn] = $data[$optionalColumn] ?? null;
+            }
+        }
+
+        $stmt->execute($params);
 
         return (int)$this->pdo->lastInsertId();
     }
@@ -69,31 +101,41 @@ class Participant {
         // Sync nombres_apellidos for legacy compatibility
         $nombresApellidos = trim($data['first_name'] . ' ' . $data['last_name']);
 
+        $setParts = [
+            'first_name = :first_name',
+            'last_name = :last_name',
+            'nombres_apellidos = :nombres_apellidos',
+            'email = :email'
+        ];
+        foreach (['identity_document', 'phone', 'notes', 'country'] as $optionalColumn) {
+            if ($this->columnExists($optionalColumn)) {
+                $setParts[] = $optionalColumn . ' = :' . $optionalColumn;
+            }
+        }
+        if ($this->columnExists('updated_at')) {
+            $setParts[] = 'updated_at = NOW()';
+        }
+
         $sql = "UPDATE {$this->table} SET 
-                    first_name = :first_name,
-                    last_name = :last_name,
-                    nombres_apellidos = :nombres_apellidos,
-                    email = :email,
-                    identity_document = :identity_document,
-                    phone = :phone,
-                    country = :country,
-                    notes = :notes,
-                    updated_at = NOW()
+                    " . implode(",\n                    ", $setParts) . "
                 WHERE id = :id";
 
         $stmt = $this->pdo->prepare($sql);
 
-        $stmt->execute([
+        $params = [
             ':id' => $id,
             ':first_name' => $data['first_name'],
             ':last_name' => $data['last_name'],
             ':nombres_apellidos' => $nombresApellidos,
             ':email' => $data['email'],
-            ':identity_document' => $data['identity_document'] ?? null,
-            ':phone' => $data['phone'] ?? null,
-            ':country' => $data['country'] ?? null,
-            ':notes' => $data['notes'] ?? null
-        ]);
+        ];
+        foreach (['identity_document', 'phone', 'notes', 'country'] as $optionalColumn) {
+            if ($this->columnExists($optionalColumn)) {
+                $params[':' . $optionalColumn] = $data[$optionalColumn] ?? null;
+            }
+        }
+
+        $stmt->execute($params);
     }
     
     public function getEnrollments(int $participantId) {
@@ -166,16 +208,37 @@ class Participant {
     }
 
     public function enroll(int $participantId, int $courseId, string $status = 'active'): void {
-        $stmt = $this->pdo->prepare("
-            INSERT INTO curso_estudiantes (curso_id, usuario_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, NOW(), NOW())
-        ");
-        $stmt->execute([$courseId, $participantId, $status]);
+        $table = 'curso_estudiantes';
+        $fields = ['curso_id', 'usuario_id', 'status'];
+        $values = ['?', '?', '?'];
+        $params = [$courseId, $participantId, $status];
+
+        if ($this->columnExists('created_at', $table)) {
+            $fields[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+        if ($this->columnExists('updated_at', $table)) {
+            $fields[] = 'updated_at';
+            $values[] = 'NOW()';
+        }
+
+        $sql = "INSERT INTO {$table} (" . implode(', ', $fields) . ") VALUES (" . implode(', ', $values) . ")";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
     }
 
     public function updateEnrollment(int $enrollmentId, string $status): void {
-        $stmt = $this->pdo->prepare("UPDATE curso_estudiantes SET status = ?, updated_at = NOW() WHERE id = ?");
-        $stmt->execute([$status, $enrollmentId]);
+        $table = 'curso_estudiantes';
+        $setParts = ['status = ?'];
+        $params = [$status];
+        if ($this->columnExists('updated_at', $table)) {
+            $setParts[] = 'updated_at = NOW()';
+        }
+        $params[] = $enrollmentId;
+
+        $sql = "UPDATE {$table} SET " . implode(', ', $setParts) . " WHERE id = ?";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
     }
 
     public function getEnrollmentById(int $enrollmentId): ?array {

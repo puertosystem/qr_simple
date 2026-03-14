@@ -210,6 +210,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
     $newVersion = $_POST['version'] ?? '';
     $newDate = $_POST['date'] ?? date('Y-m-d');
     $newDesc = $_POST['description'] ?? '';
+    $dbVersion = $_POST['db_version'] ?? '';
 
     if (!$newVersion) {
         echo json_encode(['status' => 'error', 'message' => 'La versión es requerida.']);
@@ -230,6 +231,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
         $jsonData['version'] = $newVersion;
         $jsonData['date'] = $newDate;
         $jsonData['description'] = $newDesc;
+        $jsonData['db_version'] = $dbVersion ?: ($jsonData['db_version'] ?? $newVersion);
 
         // Actualizar URL de descarga automáticamente manteniendo la base
         if (isset($jsonData['download_url'])) {
@@ -245,8 +247,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
     }
 
     // 3. Actualizar update_server_db.sql con la versión de la base de datos y RENOMBRARLO
-    $dbVersion = $_POST['db_version'] ?? '';
-    
     // Buscar archivo existente
     $sqlFiles = glob(__DIR__ . '/views/updates/update_server_db*.sql');
     $currentSqlPath = !empty($sqlFiles) ? end($sqlFiles) : __DIR__ . '/views/updates/update_server_db.sql';
@@ -258,14 +258,15 @@ if (isset($_POST['action']) && $_POST['action'] === 'update_version') {
     if ($dbVersion) {
         // Si no existe el archivo actual, crearlo (caso base)
         if (!file_exists($currentSqlPath)) {
-            $sqlContent = "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('app_version', '$dbVersion') ON DUPLICATE KEY UPDATE `valor` = '$dbVersion';";
+            $sqlContent = "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('db_version', '$dbVersion') ON DUPLICATE KEY UPDATE `valor` = '$dbVersion';";
             file_put_contents($newSqlPath, $sqlContent);
         } else {
             $sqlContent = file_get_contents($currentSqlPath);
+            $sqlContent = str_replace("'app_version'", "'db_version'", $sqlContent);
             
             // Buscar y reemplazar la versión en el INSERT/UPDATE
-            $pattern = "/VALUES \('app_version', '.*?'\)/";
-            $replacement = "VALUES ('app_version', '$dbVersion')";
+            $pattern = "/VALUES \('(app_version|db_version)', '.*?'\)/";
+            $replacement = "VALUES ('db_version', '$dbVersion')";
             $newSqlContent = preg_replace($pattern, $replacement, $sqlContent);
             
             $pattern2 = "/UPDATE `valor` = '.*?'/";
@@ -326,7 +327,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'export_db') {
         $sql .= "  PRIMARY KEY (`clave`)\n";
         $sql .= ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n";
         
-        $sql .= "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('app_version', '$version')\n";
+        $sql .= "INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('db_version', '$version')\n";
         $sql .= "ON DUPLICATE KEY UPDATE `valor` = '$version';\n\n";
         
         $sql .= "SET FOREIGN_KEY_CHECKS=1;\n";
@@ -341,6 +342,13 @@ if (isset($_POST['action']) && $_POST['action'] === 'export_db') {
         $filename = "update_server_db_{$version}.sql";
         $filepath = __DIR__ . "/views/updates/{$filename}";
         file_put_contents($filepath, $sql);
+
+        if (file_exists($jsonPath)) {
+            $jsonData = json_decode(file_get_contents($jsonPath), true);
+            if (!$jsonData) $jsonData = [];
+            $jsonData['db_version'] = $version;
+            file_put_contents($jsonPath, json_encode($jsonData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
         
         echo json_encode(['status' => 'success', 'message' => "Base de datos exportada correctamente a views/updates/$filename"]);
         
@@ -366,7 +374,9 @@ $formDbVersion = $formVersion; // Por defecto igual a la del sistema
 
 if ($sqlPath && file_exists($sqlPath)) {
     $sqlContent = file_get_contents($sqlPath);
-    if (preg_match("/VALUES \('app_version', '(.*?)'\)/", $sqlContent, $matches)) {
+    if (preg_match("/VALUES \('db_version', '(.*?)'\)/", $sqlContent, $matches)) {
+        $formDbVersion = $matches[1];
+    } elseif (preg_match("/VALUES \('app_version', '(.*?)'\)/", $sqlContent, $matches)) {
         $formDbVersion = $matches[1];
     }
 }
@@ -383,6 +393,200 @@ if (file_exists($ftpConfigPath)) {
     $ftpUser = $ftpConfig['user'] ?? '';
     $ftpPass = $ftpConfig['pass'] ?? '';
     $ftpPath = $ftpConfig['path'] ?? '/';
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'upload_ftp_sse') {
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('Connection: keep-alive');
+
+    if (function_exists('apache_setenv')) {
+        @apache_setenv('no-gzip', 1);
+    }
+    @ini_set('zlib.output_compression', 0);
+    @ini_set('implicit_flush', 1);
+    for ($i = 0; $i < ob_get_level(); $i++) { ob_end_flush(); }
+    ob_implicit_flush(1);
+
+    $sendMsg = function ($type, $msg, $progress = 0) {
+        echo "data: " . json_encode(['type' => $type, 'message' => $msg, 'progress' => $progress]) . "\n\n";
+        flush();
+    };
+
+    if (!file_exists($ftpConfigPath)) {
+        $sendMsg('error', 'No hay configuración FTP guardada.', 0);
+        exit;
+    }
+
+    $config = json_decode(file_get_contents($ftpConfigPath), true);
+    $host = (string)($config['host'] ?? '');
+    $user = (string)($config['user'] ?? '');
+    $pass = (string)($config['pass'] ?? '');
+    $remotePath = rtrim((string)($config['path'] ?? '/'), '/');
+    $versionToUpload = isset($_GET['version']) ? (string)$_GET['version'] : '';
+
+    if ($versionToUpload === '') {
+        if (file_exists($jsonPath)) {
+            $jd = json_decode(file_get_contents($jsonPath), true);
+            $versionToUpload = is_array($jd) && isset($jd['version']) ? (string)$jd['version'] : '';
+        }
+    }
+
+    if ($host === '' || $user === '' || $pass === '' || $versionToUpload === '') {
+        $sendMsg('error', 'Faltan datos para la subida FTP (host/usuario/contraseña/versión).', 0);
+        exit;
+    }
+
+    $zipName = "update_{$versionToUpload}.zip";
+    $localZipPath = $rootDir . DIRECTORY_SEPARATOR . $zipName;
+    if (!file_exists($localZipPath)) {
+        $sendMsg('error', "No se encuentra el archivo ZIP: {$zipName}", 0);
+        exit;
+    }
+    if (!file_exists($jsonPath)) {
+        $sendMsg('error', 'No se encuentra update_info.json.', 0);
+        exit;
+    }
+
+    $sendMsg('info', 'Preparando subida FTP...', 0);
+
+    $conn_id = @ftp_connect($host);
+    if (!$conn_id) {
+        $sendMsg('error', "No se pudo conectar al servidor FTP: {$host}", 0);
+        exit;
+    }
+
+    if (!@ftp_login($conn_id, $user, $pass)) {
+        ftp_close($conn_id);
+        $sendMsg('error', 'Usuario o contraseña FTP incorrectos.', 0);
+        exit;
+    }
+
+    ftp_pasv($conn_id, true);
+    $currentDir = ftp_pwd($conn_id);
+
+    $ftp_mksubdirs = function ($ftpcon, $ftpbasedir, $ftpath) {
+        @ftp_chdir($ftpcon, $ftpbasedir);
+        $parts = explode('/', $ftpath);
+        foreach ($parts as $part) {
+            if (!$part) continue;
+            if (!@ftp_chdir($ftpcon, $part)) {
+                @ftp_mkdir($ftpcon, $part);
+                @ftp_chdir($ftpcon, $part);
+            }
+        }
+    };
+
+    $chdirSuccess = false;
+    if (@ftp_chdir($conn_id, $remotePath)) {
+        $chdirSuccess = true;
+    } elseif (strpos($remotePath, 'public_html/') === 0) {
+        $strippedPath = substr($remotePath, 12);
+        if (@ftp_chdir($conn_id, $strippedPath)) {
+            $remotePath = $strippedPath;
+            $chdirSuccess = true;
+        }
+    }
+
+    if (!$chdirSuccess) {
+        $ftp_mksubdirs($conn_id, $currentDir, $remotePath);
+        if (!@ftp_chdir($conn_id, $remotePath)) {
+            $finalDir = ftp_pwd($conn_id);
+            $filesList = @ftp_nlist($conn_id, '.');
+            $filesStr = $filesList ? implode(', ', array_slice($filesList, 0, 8)) : 'No disponible';
+            ftp_close($conn_id);
+            $sendMsg('error', "No se pudo acceder al directorio: {$remotePath}. (Ubicación actual: {$finalDir}). Carpetas aquí: [{$filesStr}].", 0);
+            exit;
+        }
+    }
+
+    ftp_close($conn_id);
+
+    if (!function_exists('curl_init')) {
+        $sendMsg('error', 'La extensión cURL no está habilitada en PHP.', 0);
+        exit;
+    }
+
+    $totalBytes = (int)filesize($jsonPath) + (int)filesize($localZipPath);
+    if ($totalBytes <= 0) $totalBytes = 1;
+
+    $lastSentPercent = -1;
+    $lastSentAt = 0.0;
+
+    $uploadFile = function ($remoteFileName, $localFilePath, $baseUploadedBytes) use (&$lastSentPercent, &$lastSentAt, $sendMsg, $host, $user, $pass, $remotePath, $totalBytes) {
+        $fp = fopen($localFilePath, 'rb');
+        if (!$fp) {
+            $sendMsg('error', "No se pudo leer el archivo local: {$remoteFileName}", 0);
+            return false;
+        }
+
+        $pathPart = ltrim($remotePath, '/');
+        $url = 'ftp://' . $host . '/' . ($pathPart !== '' ? $pathPart . '/' : '') . $remoteFileName;
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_USERPWD, $user . ':' . $pass);
+        curl_setopt($ch, CURLOPT_UPLOAD, true);
+        curl_setopt($ch, CURLOPT_INFILE, $fp);
+        curl_setopt($ch, CURLOPT_INFILESIZE, (int)filesize($localFilePath));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 0);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 20);
+
+        if (defined('CURLOPT_FTP_CREATE_MISSING_DIRS')) {
+            if (defined('CURLFTP_CREATE_DIR_RETRY')) {
+                curl_setopt($ch, CURLOPT_FTP_CREATE_MISSING_DIRS, CURLFTP_CREATE_DIR_RETRY);
+            } else {
+                curl_setopt($ch, CURLOPT_FTP_CREATE_MISSING_DIRS, 1);
+            }
+        }
+
+        curl_setopt($ch, CURLOPT_NOPROGRESS, false);
+        curl_setopt($ch, CURLOPT_PROGRESSFUNCTION, function ($resource, $dl_total, $dl_now, $ul_total, $ul_now) use (&$lastSentPercent, &$lastSentAt, $sendMsg, $remoteFileName, $baseUploadedBytes, $totalBytes) {
+            $uploadedBytes = $baseUploadedBytes + (int)$ul_now;
+            $percent = (int)floor(($uploadedBytes / $totalBytes) * 100);
+            if ($percent > 99) $percent = 99;
+            $now = microtime(true);
+            if ($percent !== $lastSentPercent && ($now - $lastSentAt) >= 0.15) {
+                $lastSentPercent = $percent;
+                $lastSentAt = $now;
+                $sendMsg('progress', "Subiendo {$remoteFileName}...", $percent);
+            }
+            return 0;
+        });
+
+        $sendMsg('info', "Subiendo {$remoteFileName}...", max(0, $lastSentPercent));
+        $result = curl_exec($ch);
+        $err = curl_error($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        fclose($fp);
+
+        if ($result === false || ($code !== 0 && $code >= 400)) {
+            $msg = $err !== '' ? $err : "HTTP/FTP Code: {$code}";
+            $sendMsg('error', "Error subiendo {$remoteFileName}: {$msg}", max(0, $lastSentPercent));
+            return false;
+        }
+
+        return true;
+    };
+
+    $sendMsg('progress', 'Iniciando subida...', 1);
+
+    $bytesDone = 0;
+    if (!$uploadFile('update_info.json', $jsonPath, $bytesDone)) {
+        exit;
+    }
+    $bytesDone += (int)filesize($jsonPath);
+
+    if (!$uploadFile($zipName, $localZipPath, $bytesDone)) {
+        exit;
+    }
+
+    $sendMsg('progress', 'Finalizando...', 100);
+    $sendMsg('success', 'Archivos subidos correctamente al FTP.', 100);
+    echo "retry: 10000\n\n";
+    exit;
 }
 
 // Lógica de procesamiento AJAX (SSE)
@@ -414,12 +618,30 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         @unlink($zipPath);
     }
 
-    // Validar archivos de base de datos requeridos
-    // update_server_db.sql ahora es versionado, así que verificamos si existe alguno
-    $dbFiles = glob($rootDir . '/views/updates/update_server_db*.sql');
-    if (empty($dbFiles)) {
-         sendMsg('error', "Falta archivo SQL de actualización (views/updates/update_server_db*.sql).");
-         exit;
+    $updateInfoForZip = [];
+    if (file_exists($jsonPath)) {
+        $decoded = json_decode(file_get_contents($jsonPath), true);
+        if (is_array($decoded)) {
+            $updateInfoForZip = $decoded;
+        }
+    }
+
+    $releaseDbVersion = isset($updateInfoForZip['db_version']) ? trim((string)$updateInfoForZip['db_version']) : '';
+    $includeDbSql = ($releaseDbVersion !== '');
+    $allowedSqlFiles = [];
+
+    if ($includeDbSql) {
+        $allowedSqlFiles = array_values(array_filter(array_merge(
+            glob($rootDir . '/views/updates/update_server_db_' . $releaseDbVersion . '.sql') ?: [],
+            glob($rootDir . '/views/updates/update_server_db_' . $releaseDbVersion . '_*.sql') ?: []
+        )));
+        if (empty($allowedSqlFiles)) {
+            sendMsg('error', "Se indicó db_version=$releaseDbVersion pero no existen scripts SQL: update_server_db_{$releaseDbVersion}.sql o update_server_db_{$releaseDbVersion}_*.sql");
+            exit;
+        }
+        sendMsg('info', "Incluyendo actualización de BD (db_version=$releaseDbVersion).", 3);
+    } else {
+        sendMsg('info', "No se incluirán scripts de base de datos en este ZIP (db_version=$releaseDbVersion).", 3);
     }
 
     if (!file_exists($rootDir . '/views/updates/apply_updates.php')) {
@@ -479,6 +701,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         // 4. Extensiones
         $ext = pathinfo($relativePathNormalized, PATHINFO_EXTENSION);
         if (in_array($ext, $excludeExtensions)) $exclude = true;
+
+        if (!$includeDbSql && preg_match('#^views/updates/update_server_db.*\.sql$#', $relativePathNormalized)) {
+            $exclude = true;
+        }
+
+        if ($includeDbSql && preg_match('#^views/updates/update_server_db.*\.sql$#', $relativePathNormalized)) {
+            if (!in_array($realPath, $allowedSqlFiles, true)) {
+                $exclude = true;
+            }
+        }
 
         if ($exclude) {
             $excludedCount++;
@@ -576,7 +808,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
                                     <i class="fas fa-database text-success"></i> Exporta la estructura local actual a un archivo SQL versionado.
                                 </small>
                             </div>
-
 
                             <div class="form-group">
                                 <label class="text-muted small text-uppercase font-weight-bold">Fecha de Lanzamiento</label>
@@ -729,9 +960,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
                         </div>
                     </div>
                     <div id="upload-progress-container" class="d-none mt-3">
-                        <p class="font-weight-bold text-info mb-2"><i class="fas fa-spinner fa-spin mr-2"></i>Subiendo archivos...</p>
+                        <p class="font-weight-bold text-info mb-2" id="upload-progress-text"><i class="fas fa-spinner fa-spin mr-2"></i>Subiendo archivos...</p>
                         <div class="progress">
-                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 100%"></div>
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" id="upload-progress-bar" role="progressbar" style="width: 0%">0%</div>
                         </div>
                     </div>
                     <div id="upload-result-container" class="d-none mt-3">
@@ -768,6 +999,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         const btnCloseUpload = document.getElementById('btn-close-upload');
         const confirmContent = document.getElementById('confirm-content');
         const uploadProgressContainer = document.getElementById('upload-progress-container');
+        const uploadProgressBar = document.getElementById('upload-progress-bar');
+        const uploadProgressText = document.getElementById('upload-progress-text');
         const uploadResultContainer = document.getElementById('upload-result-container');
         const uploadResultIcon = document.getElementById('upload-result-icon');
         const uploadResultMsg = document.getElementById('upload-result-msg');
@@ -1024,9 +1257,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
         // 2. Confirmar y subir
         btnConfirmUpload.addEventListener('click', function() {
             const version = versionInput.value;
-            const formData = new FormData();
-            formData.append('action', 'upload_ftp');
-            formData.append('version', version);
 
             // Cambiar UI a "Subiendo"
             confirmContent.classList.add('d-none');
@@ -1035,52 +1265,64 @@ if (isset($_GET['action']) && $_GET['action'] === 'create_zip') {
             btnCancelUpload.classList.add('d-none');
 
             log('Iniciando subida FTP...', 'info');
+            if (uploadProgressBar) {
+                uploadProgressBar.style.width = '0%';
+                uploadProgressBar.textContent = '0%';
+            }
+            if (uploadProgressText) {
+                uploadProgressText.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Subiendo archivos...';
+            }
 
-            fetch('preparar.php', { method: 'POST', body: formData })
-            .then(r => {
-                if (!r.ok) throw new Error('Network response was not ok');
-                return r.text().then(text => {
-                    try {
-                        return JSON.parse(text);
-                    } catch (e) {
-                        console.error('Server response:', text);
-                        throw new Error('Invalid JSON response: ' + text.substring(0, 100));
+            const es = new EventSource('preparar.php?action=upload_ftp_sse&version=' + encodeURIComponent(version));
+
+            es.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+
+                if (data.type === 'progress') {
+                    const pct = Math.max(0, Math.min(100, parseInt(data.progress, 10) || 0));
+                    if (uploadProgressBar) {
+                        uploadProgressBar.style.width = pct + '%';
+                        uploadProgressBar.textContent = pct + '%';
                     }
-                });
-            })
-            .then(data => {
-                // Ocultar progreso
-                uploadProgressContainer.classList.add('d-none');
-                uploadResultContainer.classList.remove('d-none');
-                btnCloseUpload.classList.remove('d-none');
-
-                if(data.status === 'success') {
+                    if (uploadProgressText && data.message) {
+                        uploadProgressText.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>' + data.message;
+                    }
+                } else if (data.type === 'success') {
+                    es.close();
+                    uploadProgressContainer.classList.add('d-none');
+                    uploadResultContainer.classList.remove('d-none');
+                    btnCloseUpload.classList.remove('d-none');
                     uploadResultIcon.innerHTML = '<i class="fas fa-check-circle text-success"></i>';
                     uploadResultMsg.innerHTML = data.message;
                     uploadResultMsg.className = 'text-success font-weight-bold';
                     log('SUBIDA FTP EXITOSA: ' + data.message, 'info');
-                    
-                    // Refrescar automáticamente la página después de 3 segundos
                     setTimeout(() => {
                         location.reload();
                     }, 3000);
-                } else {
-                    uploadResultIcon.innerHTML = '<i class="fas fa-times-circle text-danger"></i>';
+                } else if (data.type === 'error') {
+                    es.close();
+                    uploadProgressContainer.classList.add('d-none');
+                    uploadResultContainer.classList.remove('d-none');
+                    btnCloseUpload.classList.remove('d-none');
+                    uploadResultIcon.innerHTML = '<i class="fas fa-exclamation-triangle text-danger"></i>';
                     uploadResultMsg.innerHTML = data.message;
                     uploadResultMsg.className = 'text-danger font-weight-bold';
                     log('ERROR FTP: ' + data.message, 'error');
+                } else if (data.type === 'info' && uploadProgressText && data.message) {
+                    uploadProgressText.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>' + data.message;
                 }
-            })
-            .catch(err => {
+            };
+
+            es.onerror = function() {
+                es.close();
                 uploadProgressContainer.classList.add('d-none');
                 uploadResultContainer.classList.remove('d-none');
                 btnCloseUpload.classList.remove('d-none');
-                
                 uploadResultIcon.innerHTML = '<i class="fas fa-exclamation-triangle text-danger"></i>';
-                uploadResultMsg.innerHTML = 'Error: ' + err.message;
+                uploadResultMsg.innerHTML = 'Error de conexión durante la subida.';
                 uploadResultMsg.className = 'text-danger font-weight-bold';
-                log('ERROR: ' + err.message, 'error');
-            });
+                log('ERROR: subida interrumpida', 'error');
+            };
         });
     </script>
 </body>

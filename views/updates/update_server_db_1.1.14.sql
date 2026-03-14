@@ -1,1 +1,0 @@
-INSERT INTO `configuracion` (`clave`, `valor`) VALUES ('app_version', '1.1.14') ON DUPLICATE KEY UPDATE `valor` = '1.1.14';

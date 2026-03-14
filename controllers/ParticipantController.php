@@ -796,18 +796,74 @@ class ParticipantController
         }
 
         $tmpName = $fileInfo['tmp_name'];
-        $handle = fopen($tmpName, 'r');
+        $rawPrefix = @file_get_contents($tmpName, false, null, 0, 4);
+        $rawPrefix = $rawPrefix === false ? '' : $rawPrefix;
+
+        $convertedContent = null;
+        $isUtf16Le = strncmp($rawPrefix, "\xFF\xFE", 2) === 0;
+        $isUtf16Be = strncmp($rawPrefix, "\xFE\xFF", 2) === 0;
+        if (!$isUtf16Le && !$isUtf16Be && strpos($rawPrefix, "\0") !== false) {
+            $isUtf16Le = isset($rawPrefix[1]) && $rawPrefix[1] === "\0";
+            $isUtf16Be = isset($rawPrefix[0]) && $rawPrefix[0] === "\0";
+            if (!$isUtf16Le && !$isUtf16Be) {
+                $isUtf16Le = true;
+            }
+        }
+        if ($isUtf16Le || $isUtf16Be) {
+            $raw = @file_get_contents($tmpName);
+            if ($raw !== false) {
+                $fromEncoding = $isUtf16Le ? 'UTF-16LE' : 'UTF-16BE';
+                if (function_exists('mb_convert_encoding')) {
+                    $convertedContent = @mb_convert_encoding($raw, 'UTF-8', $fromEncoding);
+                } elseif (function_exists('iconv')) {
+                    $convertedContent = @iconv($fromEncoding, 'UTF-8//IGNORE', $raw);
+                }
+            }
+        }
+
+        if (is_string($convertedContent) && $convertedContent !== '') {
+            $handle = fopen('php://temp', 'r+');
+            if ($handle !== false) {
+                fwrite($handle, $convertedContent);
+                rewind($handle);
+            }
+        } else {
+            $handle = fopen($tmpName, 'r');
+        }
         if ($handle === false) {
             return [null, 'No se pudo leer el archivo de participantes.'];
         }
 
-        $delimiter = ',';
         $sample = fgets($handle);
         if ($sample === false) {
             fclose($handle);
             return [null, 'El archivo de participantes está vacío.'];
         }
-        $delimiter = strpos($sample, ';') !== false ? ';' : ',';
+        $sample = (string)$sample;
+
+        $delimiterCandidates = [',', ';', "\t"];
+        $bestDelimiter = ',';
+        $bestScore = -1;
+
+        foreach ($delimiterCandidates as $candidate) {
+            $parsed = str_getcsv($sample, $candidate);
+            $normalizedParsed = array_map(function ($h) {
+                $h = (string)$h;
+                $h = preg_replace('/^\xEF\xBB\xBF/', '', $h);
+                return strtolower(trim($h));
+            }, $parsed);
+
+            $columnCount = count(array_filter($normalizedParsed, function ($v) { return $v !== ''; }));
+            $hasEmail = in_array('email', $normalizedParsed, true);
+            $score = $columnCount + ($hasEmail ? 100 : 0);
+
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestDelimiter = $candidate;
+            }
+        }
+
+        $delimiter = $bestDelimiter;
         rewind($handle);
 
         $headers = fgetcsv($handle, 0, $delimiter);
@@ -816,37 +872,59 @@ class ParticipantController
             return [null, 'No se pudo leer la cabecera del archivo.'];
         }
 
-        // ... (keep header mapping logic, it's generic) ...
-        // Re-implementing simplified header mapping for brevity in this response, 
-        // assuming standard headers or reusing original logic.
-        // For safety, I'll copy the original logic structure but condensed.
-        
-        $normalized = array_map(function($h) { return strtolower(trim((string)$h)); }, $headers);
-        $headerMap = array_flip(array_filter($normalized));
+        $normalizeHeader = function (string $h): string {
+            $h = preg_replace('/^\xEF\xBB\xBF/', '', $h);
+            $h = str_replace("\xC2\xA0", ' ', $h);
+            $h = trim($h, " \t\n\r\0\x0B\"'");
+
+            if (function_exists('iconv')) {
+                $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $h);
+                if (is_string($ascii) && $ascii !== '') {
+                    $h = $ascii;
+                }
+            }
+
+            $h = strtolower(trim($h));
+            $h = preg_replace('/[^a-z0-9]+/', '_', $h);
+            $h = trim($h, '_');
+            return $h;
+        };
+
+        $normalized = array_map(function ($h) use ($normalizeHeader) {
+            return $normalizeHeader((string)$h);
+        }, $headers);
+
+        $headerMap = [];
+        foreach ($normalized as $i => $name) {
+            if ($name !== '') {
+                $headerMap[$name] = (int)$i;
+            }
+        }
         
         // Aliases logic
         $aliases = [
             'first_name' => ['nombres', 'firstname', 'name'],
             'last_name' => ['apellidos', 'surname', 'lastname', 'last'],
-            'email' => ['correo', 'email_address', 'mail'],
+            'email' => ['correo', 'correo electronico', 'correo electrónico', 'e-mail', 'email_address', 'mail'],
             'identity_document' => ['identity_doc', 'dni', 'documento', 'doc_identidad', 'document', 'numero_documento'],
-            'phone' => ['telefono', 'celular', 'mobile', 'phone_number'],
+            'phone' => ['telefono', 'teléfono', 'celular', 'mobile', 'phone_number'],
             'notes' => ['observaciones', 'nota', 'comentarios', 'comments']
         ];
         foreach ($aliases as $canonical => $syns) {
             if (!isset($headerMap[$canonical])) {
                 foreach ($syns as $syn) {
-                    if (isset($headerMap[$syn])) {
-                        $headerMap[$canonical] = $headerMap[$syn];
+                    $synKey = $normalizeHeader((string)$syn);
+                    if ($synKey !== '' && isset($headerMap[$synKey])) {
+                        $headerMap[$canonical] = $headerMap[$synKey];
                         break;
                     }
                 }
             }
         }
 
-        if (!isset($headerMap['email']) && !isset($headerMap['identity_document'])) {
+        if (!isset($headerMap['email'])) {
             fclose($handle);
-            return [null, 'El archivo debe contener al menos la columna: email o identity_document.'];
+            return [null, 'El archivo debe contener la columna: email.'];
         }
 
         $rows = [];
@@ -864,6 +942,7 @@ class ParticipantController
         $skippedExistingEnrollment = 0;
         $skippedInvalidRow = 0;
         $skippedMissingData = 0;
+        $errorSamples = [];
 
         foreach ($rows as $index => $data) {
             $firstName = isset($headerMap['first_name']) ? trim($data[$headerMap['first_name']] ?? '') : '';
@@ -971,7 +1050,12 @@ class ParticipantController
                     $pdo->rollBack();
                 }
                 $skippedInvalidRow++;
-                error_log('Error en carga masiva fila ' . ($index + 2) . ': ' . $e->getMessage());
+                $rowNumber = $index + 2; // +1 header, +1 1-based
+                $errorMessage = trim((string)$e->getMessage());
+                error_log('Error en carga masiva fila ' . $rowNumber . ': ' . $errorMessage);
+                if (count($errorSamples) < 3) {
+                    $errorSamples[] = 'Fila ' . $rowNumber . ': ' . ($errorMessage !== '' ? $errorMessage : 'Error desconocido');
+                }
             }
         }
 
@@ -979,6 +1063,7 @@ class ParticipantController
         if ($skippedExistingEnrollment > 0) $message .= ' Se omitieron ' . $skippedExistingEnrollment . ' ya inscritos.';
         if ($skippedMissingData > 0) $message .= ' Se omitieron ' . $skippedMissingData . ' filas nuevas sin email.';
         if ($skippedInvalidRow > 0) $message .= ' Se omitieron ' . $skippedInvalidRow . ' con errores.';
+        if (!empty($errorSamples)) $message .= ' Ejemplos: ' . implode(' | ', $errorSamples) . '.';
 
         return [$message, null];
     }
